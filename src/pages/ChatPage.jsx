@@ -1,0 +1,261 @@
+import { useState, useRef, useEffect } from 'react'
+import { useProviders } from '../store/providers'
+import { useSessions } from '../store/sessions'
+import MessageBubble from '../components/MessageBubble'
+
+const FILE_ICONS = {
+  image: '🖼️',
+  video: '🎬',
+  text: '📄',
+  office: '📊',
+  default: '📎',
+}
+
+function fileIcon(att) {
+  if (att.isImage) return FILE_ICONS.image
+  const v = ['mp4','mov','avi','mkv','webm']
+  if (v.includes(att.ext)) return FILE_ICONS.video
+  const o = ['xlsx','xls','docx','doc','pptx','ppt']
+  if (o.includes(att.ext)) return FILE_ICONS.office
+  if (att.isText) return FILE_ICONS.text
+  return FILE_ICONS.default
+}
+
+export default function ChatPage() {
+  const { activeProvider } = useProviders()
+  const { activeSession, activeId, updateSession, updateSessionMsg, createSession } = useSessions()
+
+  const messages = activeSession?.messages ?? []
+  const [input, setInput] = useState('')
+  const [attachments, setAttachments] = useState([])
+  const [streaming, setStreaming] = useState(false)
+  const [sessionCwd, setSessionCwd] = useState('')
+  const [showCwdInput, setShowCwdInput] = useState(false)
+  const bottomRef = useRef(null)
+  const pickFilesRef = useRef(null)
+
+  useEffect(() => { setInput(''); setAttachments([]) }, [activeId])
+
+  useEffect(() => {
+    const offNew = window.api.menu.onNewSession(() => createSession())
+    const offFile = window.api.menu.onPickFile(() => pickFilesRef.current?.())
+    return () => { offNew(); offFile() }
+  }, [createSession])
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages])
+
+  const setMessages = (updater) => {
+    if (!activeId) return
+    const next = typeof updater === 'function' ? updater(messages) : updater
+    updateSession(activeId, next)
+  }
+
+  const updateMsg = (sid, msgId, updater) => {
+    updateSessionMsg(sid, prev => prev.map(m => m.id === msgId ? updater(m) : m))
+  }
+
+  const pickFiles = async () => {
+    const files = await window.api.file.pick()
+    if (files?.length) setAttachments(prev => [...prev, ...files])
+  }
+  pickFilesRef.current = pickFiles
+
+  const removeAttachment = (idx) => {
+    setAttachments(prev => prev.filter((_, i) => i !== idx))
+  }
+
+  const sendMessage = async () => {
+    const text = input.trim()
+    if ((!text && !attachments.length) || streaming || !activeProvider) return
+
+    let sid = activeId
+    if (!sid) sid = createSession()
+
+    const atts = [...attachments]
+    setInput('')
+    setAttachments([])
+
+    const userMsg = {
+      role: 'user',
+      content: text,
+      attachments: atts.length ? atts : undefined,
+      id: crypto.randomUUID(),
+    }
+    const assistantId = crypto.randomUUID()
+    const assistantMsg = { role: 'assistant', content: '', id: assistantId, streaming: true, toolCalls: [] }
+
+    const newMessages = [...messages, userMsg, assistantMsg]
+    updateSession(sid, newMessages)
+    setStreaming(true)
+
+    // history 传给 API（保留 attachments 供 chat.js 处理）
+    const history = [...messages, userMsg].map(m => ({
+      role: m.role,
+      content: m.content,
+      attachments: m.attachments,
+    }))
+
+    try {
+      await window.api.chat.stream(
+        activeProvider,
+        history,
+        sessionCwd || undefined,
+        (data) => {
+          if (data.type === 'text') {
+            updateMsg(sid, assistantId, m => ({ ...m, content: m.content + data.text }))
+          }
+        },
+        (data) => {
+          updateMsg(sid, assistantId, m => ({
+            ...m,
+            toolCalls: [...m.toolCalls, { name: data.name, input: data.input, status: 'running', id: crypto.randomUUID() }],
+          }))
+        },
+        (data) => {
+          updateMsg(sid, assistantId, m => {
+            const calls = [...m.toolCalls]
+            const idx = calls.findLastIndex(c => c.name === data.name && c.status === 'running')
+            if (idx >= 0) calls[idx] = { ...calls[idx], status: 'done', result: data.result }
+            return { ...m, toolCalls: calls }
+          })
+        }
+      )
+    } catch (err) {
+      if (err.name !== 'AbortError') {
+        updateMsg(sid, assistantId, m => ({ ...m, content: m.content + `\n\n[错误] ${err.message}`, error: true }))
+      }
+    } finally {
+      updateMsg(sid, assistantId, m => ({ ...m, streaming: false }))
+      setStreaming(false)
+    }
+  }
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      sendMessage()
+    }
+  }
+
+  if (!activeProvider) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center gap-3 text-slate-500">
+        <div className="text-4xl mb-1">⚙️</div>
+        <p>请先点击左侧齿轮图标，激活一个模型配置</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex-1 flex flex-col overflow-hidden">
+      {/* 顶部栏 */}
+      <div className="px-4 py-2.5 border-b border-slate-800 flex items-center gap-2 text-sm text-slate-400">
+        <span className="w-2 h-2 rounded-full bg-green-500 shrink-0" />
+        <span className="font-medium text-slate-300">{activeProvider.name}</span>
+        <span className="text-slate-700">·</span>
+        <span className="text-slate-500">{activeProvider.modelId}</span>
+        <button
+          onClick={() => setShowCwdInput(v => !v)}
+          className="ml-2 px-2 py-0.5 text-xs bg-slate-800 hover:bg-slate-700 rounded text-slate-400 truncate max-w-[200px]"
+          title="设置工作目录"
+        >
+          📁 {sessionCwd || '默认目录'}
+        </button>
+        <button
+          onClick={() => setMessages([])}
+          className="ml-auto px-2.5 py-1 text-xs bg-slate-800 hover:bg-slate-700 rounded-md transition-colors"
+        >
+          清空
+        </button>
+      </div>
+
+      {showCwdInput && (
+        <div className="px-4 py-2 border-b border-slate-800 bg-slate-900 flex gap-2">
+          <input
+            className="flex-1 bg-slate-800 border border-slate-700 rounded px-3 py-1.5 text-sm text-slate-200 outline-none focus:border-indigo-500"
+            placeholder="工作目录，例如 D:\project\myapp"
+            value={sessionCwd}
+            onChange={e => setSessionCwd(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && setShowCwdInput(false)}
+          />
+          <button onClick={() => setShowCwdInput(false)} className="px-3 py-1.5 text-xs bg-indigo-600 hover:bg-indigo-500 text-white rounded transition-colors">
+            确定
+          </button>
+        </div>
+      )}
+
+      {/* 消息列表 */}
+      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+        {messages.length === 0 && (
+          <div className="text-center text-slate-600 mt-20">
+            <div className="text-4xl mb-3">💬</div>
+            <p className="text-sm">开始对话</p>
+            <p className="text-xs mt-1 text-slate-700">支持文件读写、执行命令、代码搜索等工具调用</p>
+          </div>
+        )}
+        {messages.map(msg => (
+          <MessageBubble key={msg.id} message={msg} />
+        ))}
+        <div ref={bottomRef} />
+      </div>
+
+      {/* 附件预览 */}
+      {attachments.length > 0 && (
+        <div className="px-4 pt-2 flex flex-wrap gap-2 border-t border-slate-800 bg-slate-900/50">
+          {attachments.map((att, i) => (
+            <div key={i} className="flex items-center gap-1.5 bg-slate-800 border border-slate-700 rounded-lg px-2 py-1 text-xs text-slate-300 max-w-[180px]">
+              <span>{fileIcon(att)}</span>
+              <span className="truncate flex-1">{att.name}</span>
+              <button onClick={() => removeAttachment(i)} className="text-slate-500 hover:text-red-400 shrink-0 ml-1">×</button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* 输入区 */}
+      <div className="px-4 py-3 border-t border-slate-800">
+        <div className="flex gap-2 items-end">
+          <button
+            onClick={pickFiles}
+            disabled={streaming}
+            title="添加附件"
+            className="w-10 h-10 flex items-center justify-center rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-400 hover:text-slate-200 transition-colors shrink-0 text-lg"
+          >
+            📎
+          </button>
+          <textarea
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="输入消息… (Enter 发送，Shift+Enter 换行)"
+            rows={1}
+            disabled={streaming}
+            className="flex-1 resize-none bg-slate-800 border border-slate-700 focus:border-indigo-500 text-slate-200 placeholder-slate-500 rounded-xl px-4 py-3 text-sm outline-none transition-colors min-h-[48px] max-h-[200px]"
+            onInput={e => {
+              e.target.style.height = 'auto'
+              e.target.style.height = Math.min(e.target.scrollHeight, 200) + 'px'
+            }}
+          />
+          {streaming ? (
+            <button
+              onClick={() => window.api.chat.abort()}
+              className="px-4 py-3 bg-red-700 hover:bg-red-600 text-white text-sm font-medium rounded-xl transition-colors shrink-0"
+            >
+              停止
+            </button>
+          ) : (
+            <button
+              onClick={sendMessage}
+              disabled={!input.trim() && !attachments.length}
+              className="px-4 py-3 bg-green-700 hover:bg-green-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium rounded-xl transition-colors shrink-0"
+            >
+              发送
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}

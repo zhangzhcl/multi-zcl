@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1e293b"/>
+      <stop offset="100%" stop-color="#0f172a"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6366f1"/>
+      <stop offset="100%" stop-color="#22d3ee"/>
+    </linearGradient>
+    <linearGradient id="accent2" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#22d3ee"/>
+      <stop offset="100%" stop-color="#6366f1"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 背景圆角矩形 -->
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+
+  <!-- 装饰线条（右侧平行线） -->
+  <rect x="340" y="110" width="62" height="8" rx="4" fill="url(#accent)" opacity="0.5"/>
+  <rect x="340" y="130" width="44" height="8" rx="4" fill="url(#accent)" opacity="0.3"/>
+
+  <!-- 左侧小点阵 -->
+  <circle cx="118" cy="380" r="6" fill="url(#accent2)" opacity="0.5"/>
+  <circle cx="138" cy="380" r="6" fill="url(#accent2)" opacity="0.35"/>
+  <circle cx="118" cy="400" r="6" fill="url(#accent2)" opacity="0.25"/>
+
+  <!-- M 字母（左半） -->
+  <path d="M108 160 L108 352 L148 352 L148 240 L196 320 L244 240 L244 352 L284 352 L284 160 L244 160 L196 250 L148 160 Z"
+        fill="url(#accent)"/>
+
+  <!-- Z 字母 -->
+  <path d="M308 160 L308 196 L374 196 L308 316 L308 352 L420 352 L420 316 L352 316 L420 196 L420 160 Z"
+        fill="url(#accent2)"/>
+</svg>
