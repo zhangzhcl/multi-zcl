@@ -21,6 +21,22 @@ async function getProxyAgent(targetUrl = 'https://bedrock-runtime.us-east-1.amaz
 
 let currentAbortController = null
 
+const IDLE_TIMEOUT_MS = 60_000
+
+// 给 signal 挂一个空闲超时：超过 IDLE_TIMEOUT_MS 没有调用 resetTimer() 就自动 abort
+function makeIdleTimer(signal) {
+  let timer = null
+  const reset = () => {
+    clearTimeout(timer)
+    timer = setTimeout(() => {
+      if (!signal.aborted) currentAbortController?.abort()
+    }, IDLE_TIMEOUT_MS)
+  }
+  const clear = () => clearTimeout(timer)
+  reset()
+  return { reset, clear }
+}
+
 function getWin() {
   return BrowserWindow.getAllWindows()[0]
 }
@@ -47,7 +63,8 @@ function setupChatHandlers() {
         await agentLoopOpenAI(provider, messages, signal, cwd)
       }
     } catch (err) {
-      if (err.name !== 'AbortError') {
+      const isAbort = err.name === 'AbortError' || err.message === 'aborted' || err.message?.includes('aborted')
+      if (!isAbort) {
         send('chat:error', err.message)
         throw err
       }
@@ -176,13 +193,16 @@ async function agentLoopBedrock(provider, messages, signal, cwd) {
       inferenceConfig: { maxTokens: 8096 },
     })
 
-    const response = await client.send(cmd)
+    const response = await client.send(cmd, { abortSignal: signal })
 
     const assistantContent = []
     let currentText = ''
     let currentToolUse = null
+    const idleTimer = makeIdleTimer(signal)
 
+    try {
     for await (const event of response.stream) {
+      idleTimer.reset()
       if (signal.aborted) break
 
       if (event.contentBlockStart?.start?.toolUse) {
@@ -205,6 +225,11 @@ async function agentLoopBedrock(provider, messages, signal, cwd) {
       } else if (event.messageStop) {
         if (currentText) { assistantContent.push({ type: 'text', text: currentText }); currentText = '' }
       }
+    }
+    } catch (err) {
+      if (err.name !== 'AbortError') throw err
+    } finally {
+      idleTimer.clear()
     }
 
     if (signal.aborted) break
@@ -240,6 +265,29 @@ function resolveModel(provider) {
     || 'claude-sonnet-4-6'
 }
 
+// 将单个附件转成消息内容块
+// - 有真实路径的文件：只告诉 AI 路径，让它用工具自己读（避免大文件塞满上下文）
+// - 无路径的图片（粘贴截图）：base64 内嵌
+function attToContentBlocks(att, format) {
+  // 有真实路径的文件（含拖入的图片）→ 只告诉 AI 路径，避免大文件撑爆 token
+  if (att.path) {
+    return [{ type: 'text', text: `[文件路径: ${att.path}]` }]
+  }
+  // 无路径的图片（粘贴截图）→ base64 内嵌，超过 1MB 则跳过避免 token 超限
+  if (att.isImage && att.base64) {
+    if (att.size > 1024 * 1024) {
+      return [{ type: 'text', text: `[图片: ${att.name}，文件过大（${(att.size / 1024 / 1024).toFixed(1)}MB），无法内嵌，请提供本地路径]` }]
+    }
+    const ext = att.ext === 'jpg' ? 'jpeg' : att.ext
+    if (format === 'openai') {
+      return [{ type: 'image_url', image_url: { url: `data:image/${ext};base64,${att.base64}` } }]
+    }
+    return [{ type: 'image', source: { type: 'base64', media_type: `image/${ext}`, data: att.base64 } }]
+  }
+  // 兜底
+  return [{ type: 'text', text: `[文件: ${att.name}]` }]
+}
+
 // 把前端消息格式转成 Anthropic messages 格式（支持附件）
 function toAnthropicMessages(messages) {
   return messages.map(m => {
@@ -247,16 +295,8 @@ function toAnthropicMessages(messages) {
       return { role: m.role, content: m.content }
     }
     const content = []
-    // 图片附件
     for (const att of m.attachments) {
-      if (att.isImage && att.base64) {
-        const ext = att.ext === 'jpg' ? 'jpeg' : att.ext
-        content.push({ type: 'image', source: { type: 'base64', media_type: `image/${ext}`, data: att.base64 } })
-      } else if (att.text) {
-        content.push({ type: 'text', text: `[文件: ${att.name}]\n${att.text}` })
-      } else {
-        content.push({ type: 'text', text: `[文件: ${att.name}（二进制，已跳过内容）]` })
-      }
+      content.push(...attToContentBlocks(att, 'anthropic'))
     }
     if (m.content) content.push({ type: 'text', text: m.content })
     return { role: 'user', content }
@@ -273,14 +313,7 @@ function toOpenAIMessages(messages, system) {
     }
     const parts = []
     for (const att of m.attachments) {
-      if (att.isImage && att.base64) {
-        const ext = att.ext === 'jpg' ? 'jpeg' : att.ext
-        parts.push({ type: 'image_url', image_url: { url: `data:image/${ext};base64,${att.base64}` } })
-      } else if (att.text) {
-        parts.push({ type: 'text', text: `[文件: ${att.name}]\n${att.text}` })
-      } else {
-        parts.push({ type: 'text', text: `[文件: ${att.name}（二进制，已跳过内容）]` })
-      }
+      parts.push(...attToContentBlocks(att, 'openai'))
     }
     if (m.content) parts.push({ type: 'text', text: m.content })
     result.push({ role: 'user', content: parts })
@@ -311,9 +344,14 @@ async function agentLoopAnthropic(provider, messages, signal, cwd) {
     if (toolsSupported) reqParams.tools = TOOL_DEFINITIONS
 
     const stream = client.messages.stream(reqParams)
+    const onAbort = () => stream.abort()
+    signal.addEventListener('abort', onAbort, { once: true })
+    const idleTimer = makeIdleTimer(signal)
 
     let streamErr = null
+    try {
     for await (const event of stream.on('error', e => { streamErr = e })) {
+      idleTimer.reset()
       if (signal.aborted) break
 
       if (event.type === 'content_block_start') {
@@ -352,6 +390,13 @@ async function agentLoopAnthropic(provider, messages, signal, cwd) {
           currentText = ''
         }
       }
+    }
+
+    } catch (err) {
+      if (err.name !== 'AbortError') throw err
+    } finally {
+      idleTimer.clear()
+      signal.removeEventListener('abort', onAbort)
     }
 
     if (signal.aborted) break
@@ -438,11 +483,12 @@ async function agentLoopOpenAI(provider, messages, signal, cwd) {
 
     let fullContent = ''
     const toolCallMap = {}
-    let streamFailed = false
+    const idleTimer = makeIdleTimer(signal)
 
     try {
     for await (const chunk of stream) {
-      if (signal.aborted) break
+      idleTimer.reset()
+      if (signal.aborted) { stream.controller.abort(); break }
       const delta = chunk.choices[0]?.delta
       if (!delta) continue
 
@@ -468,6 +514,8 @@ async function agentLoopOpenAI(provider, messages, signal, cwd) {
         continue
       }
       throw err
+    } finally {
+      idleTimer.clear()
     }
 
     if (signal.aborted) break

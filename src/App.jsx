@@ -3,6 +3,7 @@ import { ProviderStore, useProviders } from './store/providers'
 import { SessionStore, useSessions } from './store/sessions'
 import ProvidersPage from './pages/ProvidersPage'
 import ChatPage from './pages/ChatPage'
+import logoUrl from '/logo.svg'
 
 // SVG 图标组件
 function IconChat() {
@@ -100,7 +101,7 @@ function Layout() {
     <div className="flex h-screen bg-[#0f1117] text-slate-200">
       {/* 左侧图标导航 */}
       <nav className="w-12 flex flex-col items-center py-3 gap-1 bg-slate-950 border-r border-slate-800 shrink-0">
-        <img src="/logo.svg" alt="logo" className="w-7 h-7 mb-3 rounded-lg select-none" />
+        <img src={logoUrl} alt="logo" className="w-7 h-7 mb-3 rounded-lg select-none" />
 
         {/* 对话按钮 */}
         <button

@@ -75,12 +75,18 @@ npm run dist:mac
 ```
 
 产物输出到 `release/` 目录。
+  npm run clean        # 只清 dist + release（打包产物）
+  npm run clean:all    # 连 node_modules 一起清（重装依赖用）
 
+  清完后重装依赖再打包
+
+  npm install && npm run dist:win
+  
 ---
 
 ## 使用说明
 
-1. **添加配置** — 点击左侧齿轮图标 → 添加 Provider → 选择预设或手动填写
+1. **添加配置** — 点击左侧齿轮图标 → 添加 模型配置 → 选择预设或手动填写
 2. **激活配置** — 在 Provider 列表点击「激活」，自动写入 `~/.claude/settings.json`
 3. **开始对话** — 点击左侧对话图标，在输入框发送消息
 4. **发送附件** — 点击输入框左侧 📎 按钮，或菜单栏「文件 → 导入附件」
