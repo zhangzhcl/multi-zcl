@@ -1,4 +1,13 @@
-const { contextBridge, ipcRenderer } = require('electron')
+const { contextBridge, ipcRenderer, webUtils } = require('electron')
+
+// 在 preload 层捕获 drop，趁 File 对象还在用 webUtils 取真实路径，再分发给渲染进程
+const dropCallbacks = new Set()
+window.addEventListener('drop', (e) => {
+  const files = Array.from(e.dataTransfer?.files ?? [])
+  if (!files.length) return
+  const paths = files.map(f => webUtils.getPathForFile(f)).filter(Boolean)
+  if (paths.length) dropCallbacks.forEach(fn => fn(paths))
+}, true)
 
 contextBridge.exposeInMainWorld('api', {
   providers: {
@@ -31,6 +40,12 @@ contextBridge.exposeInMainWorld('api', {
   },
   file: {
     pick: () => ipcRenderer.invoke('file:pick'),
+    fromPath: (filePath) => ipcRenderer.invoke('file:fromPath', filePath),
+    fromBuffer: (name, ext, buffer) => ipcRenderer.invoke('file:fromBuffer', name, ext, buffer),
+    onDropPaths: (fn) => {
+      dropCallbacks.add(fn)
+      return () => dropCallbacks.delete(fn)
+    },
   },
   proxy: {
     get: () => ipcRenderer.invoke('proxy:get'),
