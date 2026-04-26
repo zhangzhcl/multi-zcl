@@ -75,7 +75,13 @@ npm run dist:mac
 ```
 
 产物输出到 `release/` 目录。
+  npm run clean        # 只清 dist + release（打包产物）
+  npm run clean:all    # 连 node_modules 一起清（重装依赖用）
 
+  清完后重装依赖再打包
+
+  npm install && npm run dist:win
+  
 ---
 
 ## 使用说明

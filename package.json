@@ -12,7 +12,9 @@
     "dist": "vite build && electron-builder",
     "dist:win": "vite build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win",
     "dist:mac": "vite build && electron-builder --mac",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "clean": "rm -rf dist release",
+    "clean:all": "rm -rf dist release node_modules"
   },
   "build": {
     "appId": "com.multizcl.app",
@@ -20,7 +22,6 @@
     "directories": {
       "output": "release"
     },
-    "asar": false,
     "files": [
       "dist/**/*",
       "electron/**/*",
