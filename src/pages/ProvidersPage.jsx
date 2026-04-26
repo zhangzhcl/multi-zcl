@@ -14,19 +14,19 @@ export default function ProvidersPage() {
       <div className="flex-1 overflow-y-auto p-6">
         <div className="max-w-2xl mx-auto">
           <div className="flex items-center justify-between mb-6">
-            <h1 className="text-xl font-semibold text-white">Provider 管理</h1>
+            <h1 className="text-xl font-semibold text-white">模型配置管理</h1>
             <button
               onClick={() => setEditing('new')}
               className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium rounded-lg transition-colors"
             >
-              + 添加 Provider
+              + 添加模型配置
             </button>
           </div>
 
           {providers.length === 0 && (
             <div className="text-center py-16 text-slate-500">
               <div className="text-4xl mb-3">🔌</div>
-              <p>还没有 Provider，点击上方按钮添加</p>
+              <p>还没有模型配置，点击上方按钮添加</p>
             </div>
           )}
 

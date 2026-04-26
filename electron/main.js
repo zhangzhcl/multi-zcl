@@ -269,6 +269,32 @@ ipcMain.handle('providers:deactivate', () => {
 
 ipcMain.handle('claude-settings:read', () => readClaudeSettings())
 
+ipcMain.handle('file:fromPath', (_, filePath) => {
+  const data = fs.readFileSync(filePath)
+  const ext = path.extname(filePath).toLowerCase().slice(1)
+  const name = path.basename(filePath)
+  const isImage = ['png','jpg','jpeg','gif','webp','bmp'].includes(ext)
+  const isText = ['txt','md','csv','json','xml','html','js','ts','jsx','tsx','py','java','c','cpp','go','rs','sql','bat','cmd','sh','bash','zsh','ps1','rb','php','swift','kt','kts','scala','lua','pl','r','yaml','yml','toml','ini','cfg','conf','env','log','diff','patch','gitignore','dockerfile'].includes(ext)
+  return {
+    name, ext, path: filePath, isImage, isText,
+    base64: isImage ? data.toString('base64') : null,
+    text: isText ? data.toString('utf-8') : null,
+    size: data.length,
+  }
+})
+
+ipcMain.handle('file:fromBuffer', (_, name, ext, buffer) => {
+  const isImage = ['png','jpg','jpeg','gif','webp','bmp'].includes(ext)
+  const isText = ['txt','md','csv','json','xml','html','js','ts','jsx','tsx','py','java','c','cpp','go','rs','sql','bat','cmd','sh','bash','zsh','ps1','rb','php','swift','kt','kts','scala','lua','pl','r','yaml','yml','toml','ini','cfg','conf','env','log','diff','patch','gitignore','dockerfile'].includes(ext)
+  const buf = Buffer.from(buffer)
+  return {
+    name, ext, path: null, isImage, isText,
+    base64: isImage ? buf.toString('base64') : null,
+    text: isText ? buf.toString('utf-8') : null,
+    size: buf.length,
+  }
+})
+
 ipcMain.handle('file:pick', async () => {
   const win = BrowserWindow.getAllWindows()[0]
   const result = await dialog.showOpenDialog(win, {
@@ -289,7 +315,7 @@ ipcMain.handle('file:pick', async () => {
     const ext = path.extname(fp).toLowerCase().slice(1)
     const name = path.basename(fp)
     const isImage = ['png','jpg','jpeg','gif','webp','bmp'].includes(ext)
-    const isText = ['txt','md','csv','json','xml','html','js','ts','jsx','tsx','py','java','c','cpp','go','rs','sql'].includes(ext)
+    const isText = ['txt','md','csv','json','xml','html','js','ts','jsx','tsx','py','java','c','cpp','go','rs','sql','bat','cmd','sh','bash','zsh','ps1','rb','php','swift','kt','kts','scala','lua','pl','r','yaml','yml','toml','ini','cfg','conf','env','log','diff','patch','gitignore','dockerfile'].includes(ext)
     return {
       name,
       ext,

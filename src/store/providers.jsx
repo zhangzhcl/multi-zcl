@@ -11,7 +11,7 @@ export const PRESETS = [
       ANTHROPIC_API_KEY: '',
       ANTHROPIC_BASE_URL: '',
     },
-    modelId: 'claude-sonnet-4-6',
+    modelId: 'global.anthropic.claude-sonnet-4-6',
   },
   {
     label: 'AWS Bedrock',
