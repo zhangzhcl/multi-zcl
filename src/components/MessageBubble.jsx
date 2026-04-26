@@ -2,7 +2,7 @@ import { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
-export default function MessageBubble({ message }) {
+export default function MessageBubble({ message, thinking }) {
   const isUser = message.role === 'user'
 
   return (
@@ -22,6 +22,16 @@ export default function MessageBubble({ message }) {
         </div>
       )}
 
+      {/* Thinking 指示器 */}
+      {thinking && (
+        <div className="flex items-center gap-1.5 px-1 py-0.5">
+          <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: '0ms' }} />
+          <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: '150ms' }} />
+          <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: '300ms' }} />
+          <span className="text-xs text-indigo-400 animate-pulse ml-0.5">Thinking...</span>
+        </div>
+      )}
+
       {/* 工具调用展示（只在 assistant 消息中） */}
       {!isUser && message.toolCalls?.length > 0 && (
         <div className="w-full max-w-[85%] space-y-1.5">
@@ -38,7 +48,9 @@ export default function MessageBubble({ message }) {
             ? 'bg-indigo-600 text-white rounded-br-sm'
             : message.error
               ? 'bg-red-950 border border-red-800 text-red-300 rounded-bl-sm'
-              : 'bg-slate-800 text-slate-200 rounded-bl-sm'
+              : message.waiting
+                ? 'bg-slate-900 border border-slate-700 border-dashed text-slate-500 rounded-bl-sm'
+                : 'bg-slate-800 text-slate-200 rounded-bl-sm'
         }`}>
           {isUser
             ? <pre className="whitespace-pre-wrap font-sans">{message.content}</pre>

@@ -21,6 +21,22 @@ async function getProxyAgent(targetUrl = 'https://bedrock-runtime.us-east-1.amaz
 
 let currentAbortController = null
 
+const IDLE_TIMEOUT_MS = 60_000
+
+// 给 signal 挂一个空闲超时：超过 IDLE_TIMEOUT_MS 没有调用 resetTimer() 就自动 abort
+function makeIdleTimer(signal) {
+  let timer = null
+  const reset = () => {
+    clearTimeout(timer)
+    timer = setTimeout(() => {
+      if (!signal.aborted) currentAbortController?.abort()
+    }, IDLE_TIMEOUT_MS)
+  }
+  const clear = () => clearTimeout(timer)
+  reset()
+  return { reset, clear }
+}
+
 function getWin() {
   return BrowserWindow.getAllWindows()[0]
 }
@@ -47,7 +63,8 @@ function setupChatHandlers() {
         await agentLoopOpenAI(provider, messages, signal, cwd)
       }
     } catch (err) {
-      if (err.name !== 'AbortError') {
+      const isAbort = err.name === 'AbortError' || err.message === 'aborted' || err.message?.includes('aborted')
+      if (!isAbort) {
         send('chat:error', err.message)
         throw err
       }
@@ -176,13 +193,16 @@ async function agentLoopBedrock(provider, messages, signal, cwd) {
       inferenceConfig: { maxTokens: 8096 },
     })
 
-    const response = await client.send(cmd)
+    const response = await client.send(cmd, { abortSignal: signal })
 
     const assistantContent = []
     let currentText = ''
     let currentToolUse = null
+    const idleTimer = makeIdleTimer(signal)
 
+    try {
     for await (const event of response.stream) {
+      idleTimer.reset()
       if (signal.aborted) break
 
       if (event.contentBlockStart?.start?.toolUse) {
@@ -205,6 +225,11 @@ async function agentLoopBedrock(provider, messages, signal, cwd) {
       } else if (event.messageStop) {
         if (currentText) { assistantContent.push({ type: 'text', text: currentText }); currentText = '' }
       }
+    }
+    } catch (err) {
+      if (err.name !== 'AbortError') throw err
+    } finally {
+      idleTimer.clear()
     }
 
     if (signal.aborted) break
@@ -311,9 +336,14 @@ async function agentLoopAnthropic(provider, messages, signal, cwd) {
     if (toolsSupported) reqParams.tools = TOOL_DEFINITIONS
 
     const stream = client.messages.stream(reqParams)
+    const onAbort = () => stream.abort()
+    signal.addEventListener('abort', onAbort, { once: true })
+    const idleTimer = makeIdleTimer(signal)
 
     let streamErr = null
+    try {
     for await (const event of stream.on('error', e => { streamErr = e })) {
+      idleTimer.reset()
       if (signal.aborted) break
 
       if (event.type === 'content_block_start') {
@@ -352,6 +382,13 @@ async function agentLoopAnthropic(provider, messages, signal, cwd) {
           currentText = ''
         }
       }
+    }
+
+    } catch (err) {
+      if (err.name !== 'AbortError') throw err
+    } finally {
+      idleTimer.clear()
+      signal.removeEventListener('abort', onAbort)
     }
 
     if (signal.aborted) break
@@ -438,11 +475,12 @@ async function agentLoopOpenAI(provider, messages, signal, cwd) {
 
     let fullContent = ''
     const toolCallMap = {}
-    let streamFailed = false
+    const idleTimer = makeIdleTimer(signal)
 
     try {
     for await (const chunk of stream) {
-      if (signal.aborted) break
+      idleTimer.reset()
+      if (signal.aborted) { stream.controller.abort(); break }
       const delta = chunk.choices[0]?.delta
       if (!delta) continue
 
@@ -468,6 +506,8 @@ async function agentLoopOpenAI(provider, messages, signal, cwd) {
         continue
       }
       throw err
+    } finally {
+      idleTimer.clear()
     }
 
     if (signal.aborted) break
