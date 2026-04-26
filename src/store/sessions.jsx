@@ -65,8 +65,12 @@ export function SessionStore({ children }) {
 
   const activeSession = sessions.find(s => s.id === activeId) ?? null
 
+  const getSessionMessages = useCallback((id) => {
+    return sessions.find(s => s.id === id)?.messages ?? []
+  }, [sessions])
+
   return (
-    <Ctx.Provider value={{ sessions, activeId, activeSession, setActiveId, createSession, updateSession, updateSessionMsg, deleteSession }}>
+    <Ctx.Provider value={{ sessions, activeId, activeSession, setActiveId, createSession, updateSession, updateSessionMsg, deleteSession, getSessionMessages }}>
       {children}
     </Ctx.Provider>
   )

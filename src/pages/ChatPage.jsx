@@ -23,16 +23,21 @@ function fileIcon(att) {
 
 export default function ChatPage() {
   const { activeProvider } = useProviders()
-  const { activeSession, activeId, updateSession, updateSessionMsg, createSession } = useSessions()
+  const { activeSession, activeId, updateSession, updateSessionMsg, createSession, getSessionMessages } = useSessions()
 
   const messages = activeSession?.messages ?? []
   const [input, setInput] = useState('')
   const [attachments, setAttachments] = useState([])
-  const [streaming, setStreaming] = useState(false)
+  const [streamingSessions, setStreamingSessions] = useState({})
+  const streaming = !!streamingSessions[activeId]
+  const [thinkingSessions, setThinkingSessions] = useState({})
+  const thinking = !!thinkingSessions[activeId]
+  const [statusText, setStatusText] = useState('')
   const [sessionCwd, setSessionCwd] = useState('')
   const [showCwdInput, setShowCwdInput] = useState(false)
   const bottomRef = useRef(null)
   const pickFilesRef = useRef(null)
+  const pendingQueues = useRef({}) // sid -> [{text, atts}]
 
   useEffect(() => { setInput(''); setAttachments([]) }, [activeId])
 
@@ -66,17 +71,7 @@ export default function ChatPage() {
     setAttachments(prev => prev.filter((_, i) => i !== idx))
   }
 
-  const sendMessage = async () => {
-    const text = input.trim()
-    if ((!text && !attachments.length) || streaming || !activeProvider) return
-
-    let sid = activeId
-    if (!sid) sid = createSession()
-
-    const atts = [...attachments]
-    setInput('')
-    setAttachments([])
-
+  const runSend = async (sid, text, atts, currentMessages) => {
     const userMsg = {
       role: 'user',
       content: text,
@@ -86,34 +81,36 @@ export default function ChatPage() {
     const assistantId = crypto.randomUUID()
     const assistantMsg = { role: 'assistant', content: '', id: assistantId, streaming: true, toolCalls: [] }
 
-    const newMessages = [...messages, userMsg, assistantMsg]
-    updateSession(sid, newMessages)
-    setStreaming(true)
+    updateSession(sid, [...currentMessages, userMsg, assistantMsg])
+    setStreamingSessions(prev => ({ ...prev, [sid]: true }))
+    setThinkingSessions(prev => ({ ...prev, [sid]: true }))
+    if (sid === activeId) setStatusText('正在思考…')
 
-    // history 传给 API（保留 attachments 供 chat.js 处理）
-    const history = [...messages, userMsg].map(m => ({
-      role: m.role,
-      content: m.content,
-      attachments: m.attachments,
+    const history = [...currentMessages, userMsg].map(m => ({
+      role: m.role, content: m.content, attachments: m.attachments,
     }))
 
     try {
       await window.api.chat.stream(
-        activeProvider,
-        history,
-        sessionCwd || undefined,
+        activeProvider, history, sessionCwd || undefined,
         (data) => {
           if (data.type === 'text') {
+            setThinkingSessions(prev => ({ ...prev, [sid]: false }))
+            if (sid === activeId) setStatusText('正在生成回复…')
             updateMsg(sid, assistantId, m => ({ ...m, content: m.content + data.text }))
           }
         },
         (data) => {
+          setThinkingSessions(prev => ({ ...prev, [sid]: false }))
+          if (sid === activeId) setStatusText(`执行工具：${data.name}`)
           updateMsg(sid, assistantId, m => ({
             ...m,
             toolCalls: [...m.toolCalls, { name: data.name, input: data.input, status: 'running', id: crypto.randomUUID() }],
           }))
         },
         (data) => {
+          setThinkingSessions(prev => ({ ...prev, [sid]: true }))
+          if (sid === activeId) setStatusText('正在思考…')
           updateMsg(sid, assistantId, m => {
             const calls = [...m.toolCalls]
             const idx = calls.findLastIndex(c => c.name === data.name && c.status === 'running')
@@ -123,13 +120,58 @@ export default function ChatPage() {
         }
       )
     } catch (err) {
-      if (err.name !== 'AbortError') {
+      const isAbort = err.name === 'AbortError' || err.message === 'aborted' || err.message?.includes('aborted')
+      if (!isAbort) {
         updateMsg(sid, assistantId, m => ({ ...m, content: m.content + `\n\n[错误] ${err.message}`, error: true }))
       }
     } finally {
       updateMsg(sid, assistantId, m => ({ ...m, streaming: false }))
-      setStreaming(false)
+      setStreamingSessions(prev => { const n = { ...prev }; delete n[sid]; return n })
+      setThinkingSessions(prev => { const n = { ...prev }; delete n[sid]; return n })
+      if (sid === activeId) setStatusText('')
     }
+  }
+
+  const sendMessage = async () => {
+    const text = input.trim()
+    if ((!text && !attachments.length) || !activeProvider) return
+
+    let sid = activeId
+    if (!sid) sid = createSession()
+
+    const atts = [...attachments]
+    setInput('')
+    setAttachments([])
+
+    if (streamingSessions[sid]) {
+      // 正在运行，入队并立即展示占位消息
+      const userMsg = { role: 'user', content: text, attachments: atts.length ? atts : undefined, id: crypto.randomUUID() }
+      const waitingId = crypto.randomUUID()
+      const waitingMsg = { role: 'assistant', content: '⏳ 等待上一个任务完成后执行…', id: waitingId, streaming: false, waiting: true, toolCalls: [] }
+      updateSession(sid, [...getSessionMessages(sid), userMsg, waitingMsg])
+      if (!pendingQueues.current[sid]) pendingQueues.current[sid] = []
+      pendingQueues.current[sid].push({ text, atts, waitingId })
+      return
+    }
+
+    const drain = async (s) => {
+      const queue = pendingQueues.current[s]
+      if (!queue?.length) return
+      const next = queue.shift()
+      // 去掉占位消息，把其前面的消息作为 history
+      const all = getSessionMessages(s)
+      const withoutWaiting = all.filter(m => m.id !== next.waitingId)
+      // currentMessages = 占位前的所有消息（不含 user+waiting 占位对）
+      const waitingIdx = all.findIndex(m => m.id === next.waitingId)
+      const currentMessages = waitingIdx >= 1 ? all.slice(0, waitingIdx - 1) : withoutWaiting
+      // 先把占位从 session 里删掉再追加真实消息
+      updateSession(s, withoutWaiting.slice(0, waitingIdx >= 1 ? waitingIdx - 1 : withoutWaiting.length))
+      await runSend(s, next.text, next.atts, currentMessages)
+      if (pendingQueues.current[s]?.length) drain(s)
+    }
+
+    await runSend(sid, text, atts, messages)
+    if (pendingQueues.current[sid]?.length) drain(sid)
   }
 
   const handleKeyDown = (e) => {
@@ -163,6 +205,12 @@ export default function ChatPage() {
         >
           📁 {sessionCwd || '默认目录'}
         </button>
+        {streaming && statusText && (
+          <span className="ml-3 flex items-center gap-1.5 text-xs text-indigo-400 animate-pulse">
+            <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-ping" />
+            {statusText}
+          </span>
+        )}
         <button
           onClick={() => setMessages([])}
           className="ml-auto px-2.5 py-1 text-xs bg-slate-800 hover:bg-slate-700 rounded-md transition-colors"
@@ -195,8 +243,8 @@ export default function ChatPage() {
             <p className="text-xs mt-1 text-slate-700">支持文件读写、执行命令、代码搜索等工具调用</p>
           </div>
         )}
-        {messages.map(msg => (
-          <MessageBubble key={msg.id} message={msg} />
+        {messages.map((msg, i) => (
+          <MessageBubble key={msg.id} message={msg} thinking={thinking && i === messages.length - 1 && msg.role === 'assistant'} />
         ))}
         <div ref={bottomRef} />
       </div>
@@ -219,7 +267,6 @@ export default function ChatPage() {
         <div className="flex gap-2 items-end">
           <button
             onClick={pickFiles}
-            disabled={streaming}
             title="添加附件"
             className="w-10 h-10 flex items-center justify-center rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-400 hover:text-slate-200 transition-colors shrink-0 text-lg"
           >
@@ -231,29 +278,27 @@ export default function ChatPage() {
             onKeyDown={handleKeyDown}
             placeholder="输入消息… (Enter 发送，Shift+Enter 换行)"
             rows={1}
-            disabled={streaming}
             className="flex-1 resize-none bg-slate-800 border border-slate-700 focus:border-indigo-500 text-slate-200 placeholder-slate-500 rounded-xl px-4 py-3 text-sm outline-none transition-colors min-h-[48px] max-h-[200px]"
             onInput={e => {
               e.target.style.height = 'auto'
               e.target.style.height = Math.min(e.target.scrollHeight, 200) + 'px'
             }}
           />
-          {streaming ? (
+          {streaming && (
             <button
               onClick={() => window.api.chat.abort()}
               className="px-4 py-3 bg-red-700 hover:bg-red-600 text-white text-sm font-medium rounded-xl transition-colors shrink-0"
             >
               停止
             </button>
-          ) : (
-            <button
-              onClick={sendMessage}
-              disabled={!input.trim() && !attachments.length}
-              className="px-4 py-3 bg-green-700 hover:bg-green-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium rounded-xl transition-colors shrink-0"
-            >
-              发送
-            </button>
           )}
+          <button
+            onClick={sendMessage}
+            disabled={!input.trim() && !attachments.length}
+            className="px-4 py-3 bg-green-700 hover:bg-green-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium rounded-xl transition-colors shrink-0"
+          >
+            发送
+          </button>
         </div>
       </div>
     </div>
