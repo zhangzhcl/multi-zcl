@@ -20,6 +20,7 @@ function createWindow() {
       nodeIntegration: false,
     },
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    autoHideMenuBar: process.platform !== 'darwin',
     title: 'Multi-ZCL',
   })
 
