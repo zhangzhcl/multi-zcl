@@ -35,9 +35,30 @@ async function getInstalledSkills() {
       const skillMdPath = path.join(skillPath, 'SKILL.md')
       try {
         const content = await fsPromises.readFile(skillMdPath, 'utf8')
-        skills.push({ slug: dir, content })
+        // 解析 YAML frontmatter 提取 name 和 description
+        const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)/m)
+        let name = dir
+        let description = ''
+
+        if (frontmatterMatch) {
+          const frontmatter = frontmatterMatch[1]
+          const nameMatch = frontmatter.match(/name:\s*(.+)/)
+          const descMatch = frontmatter.match(/description:\s*(.+)/)
+          if (nameMatch) name = nameMatch[1].trim()
+          if (descMatch) description = descMatch[1].trim()
+        }
+
+        // 如果没有找到 description，使用内容的第一段
+        if (!description) {
+          const bodyContent = frontmatterMatch ? frontmatterMatch[2] : content
+          const firstParagraph = bodyContent.split('\n\n')[0]
+          description = firstParagraph.replace(/^#\s+.+$/m, '').trim().substring(0, 200)
+        }
+
+        skills.push({ slug: dir, name, description })
       } catch {
-        // SKILL.md 不存在，跳过
+        // SKILL.md 不存在或读取失败，只记录目录名
+        skills.push({ slug: dir, name: dir, description: '' })
       }
     }
     return skills
@@ -576,8 +597,11 @@ async function buildSystemPrompt(cwd) {
   let skillsPrompt = ''
 
   if (skills.length > 0) {
-    const skillList = skills.map(s => `- ${s.slug}: ${s.content.split('\n')[0] || 'No description'}`).join('\n')
-    skillsPrompt = `\n\nYou have access to the following skills:\n${skillList}\n\nTo use a skill, reference its name or description in your response. The skill content will be provided when relevant.\n`
+    const skillList = skills.map(s => {
+      const desc = s.description ? ` - ${s.description}` : ''
+      return `- ${s.name}${desc}`
+    }).join('\n')
+    skillsPrompt = `\n\nYou have access to the following skills (refer to them by name when relevant):\n${skillList}\n\nWhen a skill is relevant to the conversation, its full content will be injected automatically.\n`
   }
 
   return `You are an AI assistant with access to tools that let you interact with the user's computer. You can read/write files, run shell commands, search code, and more.${skillsPrompt}
