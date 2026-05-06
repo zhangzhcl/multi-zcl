@@ -63,7 +63,7 @@ jobs:
         run: npm run build
 
       - name: Build Electron app (${{ matrix.platform }})
-        run: npm run dist:${{ matrix.platform }}
+        run: npm run dist:${{ matrix.platform }} -- --publish never
         env:
           # Windows: disable code signing
           CSC_IDENTITY_AUTO_DISCOVERY: ${{ matrix.os == 'windows-latest' && 'false' || '' }}
