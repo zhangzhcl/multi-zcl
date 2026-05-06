@@ -30,7 +30,7 @@ async function getProxyAgent(targetUrl = 'https://bedrock-runtime.us-east-1.amaz
 
 let currentAbortController = null
 
-const IDLE_TIMEOUT_MS = 60_000
+const IDLE_TIMEOUT_MS = 600_000 // 10 分钟，给大文件生成足够时间
 
 // 获取已安装的技能列表
 async function getInstalledSkills() {
@@ -257,7 +257,7 @@ async function agentLoopBedrock(provider, messages, signal, cwd, sessionId) {
       system: [{ text: SYSTEM }],
       messages: bedrockMsgs,
       toolConfig: { tools },
-      inferenceConfig: { maxTokens: 8096 },
+      inferenceConfig: { maxTokens: 64000 },
     })
 
     const response = await client.send(cmd, { abortSignal: signal })
@@ -430,7 +430,7 @@ async function agentLoopAnthropic(provider, messages, signal, cwd, sessionId) {
 
     const reqParams = {
       model: modelId,
-      max_tokens: 8096,
+      max_tokens: 64000,
       system: SYSTEM,
       messages: msgs,
     }

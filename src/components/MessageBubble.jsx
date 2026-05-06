@@ -8,7 +8,7 @@ function isLocalFilePath(text) {
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
-export default function MessageBubble({ message, thinking }) {
+export default function MessageBubble({ message, thinking, statusText }) {
   const isUser = message.role === 'user'
 
   return (
@@ -28,13 +28,13 @@ export default function MessageBubble({ message, thinking }) {
         </div>
       )}
 
-      {/* Thinking 指示器 */}
+      {/* 等待状态指示器：thinking 时在光标位置显示状态文字 */}
       {thinking && (
         <div className="flex items-center gap-1.5 px-1 py-0.5">
           <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: '0ms' }} />
           <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: '150ms' }} />
           <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: '300ms' }} />
-          <span className="text-xs text-indigo-400 animate-pulse ml-0.5">Thinking...</span>
+          <span className="text-xs text-indigo-400 animate-pulse ml-0.5">{statusText || '思考中…'}</span>
         </div>
       )}
 

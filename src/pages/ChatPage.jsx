@@ -319,12 +319,6 @@ export default function ChatPage() {
         >
           📁 {sessionCwd || '~/claude'}
         </button>
-        {streaming && statusText && (
-          <span className="ml-3 flex items-center gap-1.5 text-xs text-indigo-400 animate-pulse">
-            <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-ping" />
-            {statusText}
-          </span>
-        )}
         <button
           onClick={() => {
             setMessages([])
@@ -389,7 +383,12 @@ export default function ChatPage() {
           </div>
         )}
         {messages.map((msg, i) => (
-          <MessageBubble key={msg.id} message={msg} thinking={thinking && i === messages.length - 1 && msg.role === 'assistant'} />
+          <MessageBubble
+            key={msg.id}
+            message={msg}
+            thinking={thinking && i === messages.length - 1 && msg.role === 'assistant'}
+            statusText={i === messages.length - 1 && msg.role === 'assistant' ? statusText : ''}
+          />
         ))}
         <div ref={bottomRef} />
       </div>
