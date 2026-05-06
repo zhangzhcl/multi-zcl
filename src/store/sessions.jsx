@@ -37,7 +37,19 @@ export function SessionStore({ children }) {
     setSessions(prev => prev.map(s => {
       if (s.id !== id) return s
       const firstUser = messages.find(m => m.role === 'user')
-      const title = firstUser ? firstUser.content.slice(0, 30) + (firstUser.content.length > 30 ? '...' : '') : s.title
+      let title = s.title
+      if (firstUser) {
+        if (firstUser.content?.trim()) {
+          // 有文字内容，用文字作标题
+          title = firstUser.content.slice(0, 30) + (firstUser.content.length > 30 ? '...' : '')
+        } else if (firstUser.attachments?.length) {
+          // 只有附件没有文字，用附件名作标题
+          const first = firstUser.attachments[0].name
+          title = firstUser.attachments.length > 1
+            ? `[${first}] 等${firstUser.attachments.length}个文件`
+            : `[${first}]`
+        }
+      }
       return { ...s, title, messages, updatedAt: Date.now() }
     }))
   }, [])
@@ -48,7 +60,17 @@ export function SessionStore({ children }) {
       if (s.id !== id) return s
       const messages = msgUpdater(s.messages)
       const firstUser = messages.find(m => m.role === 'user')
-      const title = firstUser ? firstUser.content.slice(0, 30) + (firstUser.content.length > 30 ? '...' : '') : s.title
+      let title = s.title
+      if (firstUser) {
+        if (firstUser.content?.trim()) {
+          title = firstUser.content.slice(0, 30) + (firstUser.content.length > 30 ? '...' : '')
+        } else if (firstUser.attachments?.length) {
+          const first = firstUser.attachments[0].name
+          title = firstUser.attachments.length > 1
+            ? `[${first}] 等${firstUser.attachments.length}个文件`
+            : `[${first}]`
+        }
+      }
       return { ...s, title, messages, updatedAt: Date.now() }
     }))
   }, [])

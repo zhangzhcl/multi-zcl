@@ -300,6 +300,16 @@ ipcMain.handle('file:fromBuffer', (_, name, ext, buffer) => {
   }
 })
 
+ipcMain.handle('file:pickDir', async () => {
+  const win = BrowserWindow.getAllWindows()[0]
+  const result = await dialog.showOpenDialog(win, {
+    properties: ['openDirectory', 'createDirectory'],
+    title: '选择工作目录',
+  })
+  if (result.canceled || !result.filePaths.length) return null
+  return result.filePaths[0]
+})
+
 ipcMain.handle('file:pick', async () => {
   const win = BrowserWindow.getAllWindows()[0]
   const result = await dialog.showOpenDialog(win, {
@@ -375,4 +385,10 @@ ipcMain.handle('skills:install', async (event, ownerName, slug) => {
   const cmd = `npx skills add clawhub.ai/${ownerName}/${slug} -g -y`
   const { stdout, stderr } = await execAsync(cmd)
   return { success: true, stdout, stderr }
+})
+
+ipcMain.handle('skills:uninstall', async (event, slug) => {
+  const skillPath = path.join(SKILLS_DIR, slug)
+  await fsPromises.rm(skillPath, { recursive: true, force: true })
+  return { success: true }
 })

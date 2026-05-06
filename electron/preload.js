@@ -14,7 +14,8 @@ contextBridge.exposeInMainWorld('api', {
   skills: {
     list: () => ipcRenderer.invoke('skills:list'),
     fetch: (category, query, page) => ipcRenderer.invoke('skills:fetch', category, query, page),
-    install: (ownerName, slug) => ipcRenderer.invoke('skills:install', ownerName, slug)
+    install: (ownerName, slug) => ipcRenderer.invoke('skills:install', ownerName, slug),
+    uninstall: (slug) => ipcRenderer.invoke('skills:uninstall', slug),
   },
   providers: {
     list: () => ipcRenderer.invoke('providers:list'),
@@ -27,7 +28,7 @@ contextBridge.exposeInMainWorld('api', {
     read: () => ipcRenderer.invoke('claude-settings:read'),
   },
   chat: {
-    stream: (provider, messages, sessionCwd, onChunk, onToolStart, onToolEnd) => {
+    stream: (provider, messages, sessionCwd, sessionId, onChunk, onToolStart, onToolEnd) => {
       const chunkFn = (_, data) => onChunk(data)
       const toolStartFn = (_, data) => onToolStart?.(data)
       const toolEndFn = (_, data) => onToolEnd?.(data)
@@ -35,7 +36,7 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.on('chat:tool_start', toolStartFn)
       ipcRenderer.on('chat:tool_end', toolEndFn)
       return ipcRenderer
-        .invoke('chat:stream', provider, messages, sessionCwd)
+        .invoke('chat:stream', provider, messages, sessionCwd, sessionId)
         .finally(() => {
           ipcRenderer.removeListener('chat:chunk', chunkFn)
           ipcRenderer.removeListener('chat:tool_start', toolStartFn)
@@ -43,8 +44,10 @@ contextBridge.exposeInMainWorld('api', {
         })
     },
     abort: () => ipcRenderer.invoke('chat:abort'),
+    clear: (sessionId) => ipcRenderer.invoke('chat:clear', sessionId),
   },
   file: {
+    pickDir: () => ipcRenderer.invoke('file:pickDir'),
     pick: () => ipcRenderer.invoke('file:pick'),
     fromPath: (filePath) => ipcRenderer.invoke('file:fromPath', filePath),
     fromBuffer: (name, ext, buffer) => ipcRenderer.invoke('file:fromBuffer', name, ext, buffer),

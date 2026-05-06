@@ -83,7 +83,11 @@ function SessionSidebar() {
           >
             <span className="flex-1 text-xs truncate">{s.title}</span>
             <button
-              onClick={e => { e.stopPropagation(); deleteSession(s.id) }}
+              onClick={e => {
+                e.stopPropagation()
+                window.api.chat.clear(s.id) // 同步清除后端 session 历史缓存
+                deleteSession(s.id)
+              }}
               className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-red-400 transition-all shrink-0"
               title="删除"
             >

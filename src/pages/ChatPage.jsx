@@ -38,7 +38,12 @@ function fileIcon(att) {
 
 export default function ChatPage() {
   const { activeProvider } = useProviders()
-  const { activeSession, activeId, updateSession, updateSessionMsg, createSession, getSessionMessages } = useSessions()
+  const { sessions, activeSession, activeId, updateSession, updateSessionMsg, createSession, getSessionMessages } = useSessions()
+
+  // 始终指向最新 sessions，避免异步回调中的 stale closure
+  // 始终指向最新 sessions，避免异步回调中的 stale closure
+  const sessionsRef = useRef(sessions)
+  useEffect(() => { sessionsRef.current = sessions }, [sessions])
 
   const messages = activeSession?.messages ?? []
   const [input, setInput] = useState('')
@@ -48,14 +53,43 @@ export default function ChatPage() {
   const [thinkingSessions, setThinkingSessions] = useState({})
   const thinking = !!thinkingSessions[activeId]
   const [statusText, setStatusText] = useState('')
-  const [sessionCwd, setSessionCwd] = useState('')
+  const [sessionCwd, setSessionCwd] = useState('') // 空串=使用后端默认 ~/claude
   const [showCwdInput, setShowCwdInput] = useState(false)
   const [isDragOver, setIsDragOver] = useState(false)
   const bottomRef = useRef(null)
+  const messagesContainerRef = useRef(null)
+  const userScrolledRef = useRef(false) // 用户是否滚动离开了底部
   const pickFilesRef = useRef(null)
+  const textareaRef = useRef(null)
   const pendingQueues = useRef({}) // sid -> [{text, atts}]
+  const isComposingRef = useRef(false) // IME 输入法合成中标志
 
-  useEffect(() => { setInput(''); setAttachments([]) }, [activeId])
+  // 始终指向最新 activeProvider / sessionCwd，避免 drain 闭包使用过期值
+  const activeProviderRef = useRef(activeProvider)
+  useEffect(() => { activeProviderRef.current = activeProvider }, [activeProvider])
+  const sessionCwdRef = useRef(sessionCwd)
+  useEffect(() => { sessionCwdRef.current = sessionCwd }, [sessionCwd])
+
+  useEffect(() => {
+    setInput('')
+    setAttachments([])
+    userScrolledRef.current = false // 切换会话时重置，滚到底部展示最新消息
+  }, [activeId])
+
+  // 会话被删除时清理对应的待发队列，防止内存泄漏
+  useEffect(() => {
+    const ids = new Set(sessions.map(s => s.id))
+    Object.keys(pendingQueues.current).forEach(sid => {
+      if (!ids.has(sid)) delete pendingQueues.current[sid]
+    })
+  }, [sessions])
+
+  // 当 input 被清空时（发送后），重置 textarea 高度
+  useEffect(() => {
+    if (!input && textareaRef.current) {
+      textareaRef.current.style.height = 'auto'
+    }
+  }, [input])
 
   useEffect(() => {
     const offNew = window.api.menu.onNewSession(() => createSession())
@@ -67,8 +101,19 @@ export default function ChatPage() {
     return () => { offNew(); offFile(); offDrop() }
   }, [createSession])
 
+  // 监听滚动：用户滚离底部超过 80px 则暂停自动跟随
+  const handleMessagesScroll = () => {
+    const el = messagesContainerRef.current
+    if (!el) return
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+    userScrolledRef.current = distanceFromBottom > 80
+  }
+
+  // 流式内容更新时：只有用户在底部才自动跟随，用 auto（即时）避免高频 smooth 产生抖动
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    if (!userScrolledRef.current) {
+      bottomRef.current?.scrollIntoView({ behavior: 'auto' })
+    }
   }, [messages])
 
   const setMessages = (updater) => {
@@ -125,6 +170,9 @@ export default function ChatPage() {
   }
 
   const runSend = async (sid, text, atts, currentMessages) => {
+    // 发送新消息时重置滚动状态，确保能看到最新的输出
+    userScrolledRef.current = false
+
     const userMsg = {
       role: 'user',
       content: text,
@@ -145,7 +193,7 @@ export default function ChatPage() {
 
     try {
       await window.api.chat.stream(
-        activeProvider, history, sessionCwd || undefined,
+        activeProviderRef.current, history, sessionCwdRef.current || undefined, sid,
         (data) => {
           if (data.type === 'text') {
             setThinkingSessions(prev => ({ ...prev, [sid]: false }))
@@ -158,7 +206,8 @@ export default function ChatPage() {
           if (sid === activeId) setStatusText(`执行工具：${data.name}`)
           updateMsg(sid, assistantId, m => ({
             ...m,
-            toolCalls: [...m.toolCalls, { name: data.name, input: data.input, status: 'running', id: crypto.randomUUID() }],
+            // 保存 toolUseId 供后续重建对话历史使用
+            toolCalls: [...m.toolCalls, { toolUseId: data.id, name: data.name, input: data.input, status: 'running', id: crypto.randomUUID() }],
           }))
         },
         (data) => {
@@ -211,8 +260,8 @@ export default function ChatPage() {
       const queue = pendingQueues.current[s]
       if (!queue?.length) return
       const next = queue.shift()
-      // 去掉占位消息，把其前面的消息作为 history
-      const all = getSessionMessages(s)
+      // 通过 ref 读取最新 sessions，避免 stale closure 导致丢失第一条回复
+      const all = sessionsRef.current.find(sess => sess.id === s)?.messages ?? []
       const withoutWaiting = all.filter(m => m.id !== next.waitingId)
       // currentMessages = 占位前的所有消息（不含 user+waiting 占位对）
       const waitingIdx = all.findIndex(m => m.id === next.waitingId)
@@ -228,7 +277,9 @@ export default function ChatPage() {
   }
 
   const handleKeyDown = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    // isComposingRef.current 为 true 时说明正在用输入法合成（如中文拼音），
+    // 此时 Enter 是确认候选词，不应触发发送
+    if (e.key === 'Enter' && !e.shiftKey && !isComposingRef.current) {
       e.preventDefault()
       sendMessage()
     }
@@ -264,9 +315,9 @@ export default function ChatPage() {
         <button
           onClick={() => setShowCwdInput(v => !v)}
           className="ml-2 px-2 py-0.5 text-xs bg-slate-800 hover:bg-slate-700 rounded text-slate-400 truncate max-w-[200px]"
-          title="设置工作目录"
+          title="设置工作目录（默认：~/claude）"
         >
-          📁 {sessionCwd || '默认目录'}
+          📁 {sessionCwd || '~/claude'}
         </button>
         {streaming && statusText && (
           <span className="ml-3 flex items-center gap-1.5 text-xs text-indigo-400 animate-pulse">
@@ -275,7 +326,11 @@ export default function ChatPage() {
           </span>
         )}
         <button
-          onClick={() => setMessages([])}
+          onClick={() => {
+            setMessages([])
+            // 同步清除后端的 session 历史缓存
+            if (activeId) window.api.chat.clear(activeId)
+          }}
           className="ml-auto px-2.5 py-1 text-xs bg-slate-800 hover:bg-slate-700 rounded-md transition-colors"
         >
           清空
@@ -283,22 +338,49 @@ export default function ChatPage() {
       </div>
 
       {showCwdInput && (
-        <div className="px-4 py-2 border-b border-slate-800 bg-slate-900 flex gap-2">
+        <div className="px-4 py-2 border-b border-slate-800 bg-slate-900 flex gap-2 items-center">
           <input
-            className="flex-1 bg-slate-800 border border-slate-700 rounded px-3 py-1.5 text-sm text-slate-200 outline-none focus:border-indigo-500"
-            placeholder="工作目录，例如 D:\project\myapp"
+            className="flex-1 bg-slate-800 border border-slate-700 rounded px-3 py-1.5 text-sm text-slate-200 outline-none focus:border-indigo-500 min-w-0"
+            placeholder="手动粘贴工作目录路径，或点击「浏览」选择文件夹"
             value={sessionCwd}
             onChange={e => setSessionCwd(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && setShowCwdInput(false)}
           />
-          <button onClick={() => setShowCwdInput(false)} className="px-3 py-1.5 text-xs bg-indigo-600 hover:bg-indigo-500 text-white rounded transition-colors">
+          <button
+            onClick={async () => {
+              try {
+                const dir = await window.api.file.pickDir()
+                if (dir) setSessionCwd(dir)
+              } catch (e) {
+                console.error('pickDir failed:', e)
+              }
+            }}
+            className="px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 text-slate-200 rounded transition-colors shrink-0"
+          >
+            浏览…
+          </button>
+          <button
+            onClick={() => setSessionCwd('')}
+            className="px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 text-slate-400 rounded transition-colors shrink-0"
+            title="重置为默认目录 ~/claude"
+          >
+            重置
+          </button>
+          <button
+            onClick={() => setShowCwdInput(false)}
+            className="px-3 py-1.5 text-xs bg-indigo-600 hover:bg-indigo-500 text-white rounded transition-colors shrink-0"
+          >
             确定
           </button>
         </div>
       )}
 
       {/* 消息列表 */}
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+      <div
+        ref={messagesContainerRef}
+        onScroll={handleMessagesScroll}
+        className="flex-1 overflow-y-auto px-4 py-4 space-y-4"
+      >
         {messages.length === 0 && (
           <div className="text-center text-slate-600 mt-20">
             <div className="text-4xl mb-3">💬</div>
@@ -336,8 +418,11 @@ export default function ChatPage() {
             📎
           </button>
           <textarea
+            ref={textareaRef}
             value={input}
             onChange={e => setInput(e.target.value)}
+            onCompositionStart={() => { isComposingRef.current = true }}
+            onCompositionEnd={() => { isComposingRef.current = false }}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
             placeholder="输入消息… (Enter 发送，Shift+Enter 换行，可粘贴截图)"

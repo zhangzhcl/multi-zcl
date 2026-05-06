@@ -59,6 +59,10 @@ const useSkillsStore = create((set, get) => ({
     return await window.api.skills.install(ownerName, slug)
   },
 
+  uninstall: async (slug) => {
+    return await window.api.skills.uninstall(slug)
+  },
+
   isInstalled: (slug) => {
     return get().installed.some(s => s.slug === slug)
   }

@@ -1,7 +1,9 @@
 import { useState } from 'react'
 
-export default function SkillModal({ skill, isInstalled, onClose, onInstall }) {
+export default function SkillModal({ skill, isInstalled, onClose, onInstall, onUninstall }) {
   const [installing, setInstalling] = useState(false)
+  const [uninstalling, setUninstalling] = useState(false)
+  const [confirmUninstall, setConfirmUninstall] = useState(false)
   const [output, setOutput] = useState('')
 
   const handleInstall = async () => {
@@ -14,13 +16,24 @@ export default function SkillModal({ skill, isInstalled, onClose, onInstall }) {
         setOutput(prev => prev + '错误: ' + result.stderr + '\n')
       }
       setOutput(prev => prev + '\n✓ 安装完成！')
-      setTimeout(() => {
-        onClose()
-      }, 1500)
+      setTimeout(() => onClose(), 1500)
     } catch (err) {
       setOutput(prev => prev + '✗ 安装失败: ' + err.message + '\n')
     } finally {
       setInstalling(false)
+    }
+  }
+
+  const handleUninstall = async () => {
+    setUninstalling(true)
+    setOutput('正在卸载...\n')
+    try {
+      await onUninstall()
+      setOutput(prev => prev + '✓ 卸载完成！')
+      setTimeout(() => onClose(), 1000)
+    } catch (err) {
+      setOutput(prev => prev + '✗ 卸载失败: ' + err.message + '\n')
+      setUninstalling(false)
     }
   }
 
@@ -39,10 +52,7 @@ export default function SkillModal({ skill, isInstalled, onClose, onInstall }) {
               <h2 className="text-xl font-semibold text-white mb-1">{skill.name}</h2>
               <p className="text-sm text-slate-500">by {skill.ownerName}</p>
             </div>
-            <button
-              onClick={onClose}
-              className="text-slate-500 hover:text-white transition-colors"
-            >
+            <button onClick={onClose} className="text-slate-500 hover:text-white transition-colors">
               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
               </svg>
@@ -67,11 +77,14 @@ export default function SkillModal({ skill, isInstalled, onClose, onInstall }) {
             {skill.version && (
               <span className="px-2 py-0.5 bg-slate-800 text-slate-400 rounded">v{skill.version}</span>
             )}
+            {isInstalled && (
+              <span className="px-2 py-0.5 bg-green-900/60 text-green-400 rounded text-xs">已安装</span>
+            )}
           </div>
         </div>
 
         {/* 内容区 */}
-        <div className="p-6 overflow-y-auto max-h-[60vh]">
+        <div className="p-6 overflow-y-auto max-h-[45vh]">
           <p className="text-slate-300 mb-4">{skill.description_zh}</p>
 
           {/* 安装命令 */}
@@ -82,10 +95,10 @@ export default function SkillModal({ skill, isInstalled, onClose, onInstall }) {
             </code>
           </div>
 
-          {/* 安装输出 */}
+          {/* 操作输出 */}
           {output && (
             <div className="mb-4">
-              <h3 className="text-sm font-medium text-slate-400 mb-2">安装输出：</h3>
+              <h3 className="text-sm font-medium text-slate-400 mb-2">执行输出：</h3>
               <pre className="bg-slate-950 px-3 py-2 rounded-lg text-xs text-slate-300 overflow-x-auto whitespace-pre-wrap">
                 {output}
               </pre>
@@ -109,10 +122,11 @@ export default function SkillModal({ skill, isInstalled, onClose, onInstall }) {
           <button
             onClick={onClose}
             className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg transition-colors"
-            disabled={installing}
+            disabled={installing || uninstalling}
           >
             关闭
           </button>
+
           {!isInstalled && (
             <button
               onClick={handleInstall}
@@ -126,10 +140,38 @@ export default function SkillModal({ skill, isInstalled, onClose, onInstall }) {
               {installing ? '安装中...' : '安装技能'}
             </button>
           )}
-          {isInstalled && (
-            <span className="px-4 py-2 bg-green-900/50 text-green-400 rounded-lg">
-              ✓ 已安装
-            </span>
+
+          {isInstalled && !confirmUninstall && (
+            <button
+              onClick={() => setConfirmUninstall(true)}
+              disabled={uninstalling}
+              className="px-4 py-2 bg-slate-700 hover:bg-red-800 text-slate-300 hover:text-white rounded-lg transition-colors"
+            >
+              卸载
+            </button>
+          )}
+
+          {isInstalled && confirmUninstall && (
+            <>
+              <span className="self-center text-sm text-slate-400">确认卸载？</span>
+              <button
+                onClick={() => setConfirmUninstall(false)}
+                className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg transition-colors"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleUninstall}
+                disabled={uninstalling}
+                className={`px-4 py-2 rounded-lg transition-colors ${
+                  uninstalling
+                    ? 'bg-slate-700 text-slate-500 cursor-not-allowed'
+                    : 'bg-red-700 hover:bg-red-600 text-white'
+                }`}
+              >
+                {uninstalling ? '卸载中...' : '确认卸载'}
+              </button>
+            </>
           )}
         </div>
       </div>

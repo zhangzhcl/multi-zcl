@@ -17,7 +17,7 @@ const CATEGORIES = [
 export default function SkillsPage() {
   const {
     skills, loading, category, query, page, total,
-    fetchInstalled, fetchSkills, setCategory, setQuery, setPage, install, isInstalled
+    fetchInstalled, fetchSkills, setCategory, setQuery, setPage, install, uninstall, isInstalled
   } = useSkills()
 
   const [selectedSkill, setSelectedSkill] = useState(null)
@@ -120,6 +120,11 @@ export default function SkillsPage() {
           onClose={() => setSelectedSkill(null)}
           onInstall={async () => {
             await install(selectedSkill.ownerName, selectedSkill.slug)
+            await fetchInstalled()
+            setSelectedSkill(null)
+          }}
+          onUninstall={async () => {
+            await uninstall(selectedSkill.slug)
             await fetchInstalled()
             setSelectedSkill(null)
           }}

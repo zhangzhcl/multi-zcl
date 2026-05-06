@@ -2,8 +2,16 @@ const { ipcMain, BrowserWindow, session } = require('electron')
 const { TOOL_DEFINITIONS, executeTool } = require('./tools')
 const os = require('os')
 const path = require('path')
+const fs = require('fs')
 const fsPromises = require('fs').promises
 const { HttpsProxyAgent } = require('https-proxy-agent')
+
+// 默认工作目录：~/claude，不存在则自动创建
+const DEFAULT_CWD = path.join(os.homedir(), 'claude')
+try { fs.mkdirSync(DEFAULT_CWD, { recursive: true }) } catch {}
+
+// 每个 session 的完整 API 消息历史（含 tool call/result），key: "<format>:<sessionId>"
+const sessionHistory = new Map()
 
 // 自动检测本机系统代理（127.0.0.1 本地代理优先）
 async function getProxyAgent(targetUrl = 'https://bedrock-runtime.us-east-1.amazonaws.com') {
@@ -91,27 +99,24 @@ function send(event, data) {
 }
 
 function setupChatHandlers() {
-  ipcMain.handle('chat:stream', async (_, provider, messages, sessionCwd) => {
+  ipcMain.handle('chat:stream', async (_, provider, messages, sessionCwd, sessionId) => {
     currentAbortController = new AbortController()
     const signal = currentAbortController.signal
-    const cwd = sessionCwd || os.homedir()
+    const cwd = sessionCwd || DEFAULT_CWD
 
     console.log('[chat] provider:', JSON.stringify({ name: provider.name, sdkType: provider.sdkType, modelId: provider.modelId, envKeys: Object.keys(provider.envVars || {}), isBedrock: isBedrock(provider) }))
 
     try {
       if (isBedrock(provider)) {
-        await agentLoopBedrock(provider, messages, signal, cwd)
+        await agentLoopBedrock(provider, messages, signal, cwd, sessionId)
       } else if (provider.sdkType === 'anthropic') {
-        await agentLoopAnthropic(provider, messages, signal, cwd)
+        await agentLoopAnthropic(provider, messages, signal, cwd, sessionId)
       } else {
-        await agentLoopOpenAI(provider, messages, signal, cwd)
+        await agentLoopOpenAI(provider, messages, signal, cwd, sessionId)
       }
     } catch (err) {
       const isAbort = err.name === 'AbortError' || err.message === 'aborted' || err.message?.includes('aborted')
-      if (!isAbort) {
-        send('chat:error', err.message)
-        throw err
-      }
+      if (!isAbort) throw err
     } finally {
       currentAbortController = null
     }
@@ -119,6 +124,16 @@ function setupChatHandlers() {
 
   ipcMain.handle('chat:abort', () => {
     currentAbortController?.abort()
+  })
+
+  // 清除指定 session 的历史缓存（前端清空对话时调用）
+  ipcMain.handle('chat:clear', (_, sessionId) => {
+    if (sessionId) {
+      sessionHistory.delete(`anthropic:${sessionId}`)
+      sessionHistory.delete(`openai:${sessionId}`)
+    } else {
+      sessionHistory.clear()
+    }
   })
 }
 
@@ -158,7 +173,7 @@ async function resolveAnthropicClient(provider) {
   return new Anthropic.default(opts)
 }
 
-async function agentLoopBedrock(provider, messages, signal, cwd) {
+async function agentLoopBedrock(provider, messages, signal, cwd, sessionId) {
   const { BedrockRuntimeClient, ConverseStreamCommand } = require('@aws-sdk/client-bedrock-runtime')
   const { NodeHttpHandler } = require('@smithy/node-http-handler')
   const env = resolveEnv(provider)
@@ -222,7 +237,15 @@ async function agentLoopBedrock(provider, messages, signal, cwd) {
     })
   }
 
-  let msgs = toAnthropicMessages(messages) // 先转成统一格式
+  // 使用缓存的历史（含 tool results），只追加最新 user 消息
+  const histKey = sessionId && `anthropic:${sessionId}`
+  let msgs
+  if (histKey && sessionHistory.has(histKey)) {
+    const stored = sessionHistory.get(histKey)
+    msgs = [...stored, ...toAnthropicMessages([messages[messages.length - 1]])]
+  } else {
+    msgs = toAnthropicMessages(messages)
+  }
 
   for (let turn = 0; turn < 50; turn++) {
     if (signal.aborted) break
@@ -286,7 +309,7 @@ async function agentLoopBedrock(provider, messages, signal, cwd) {
 
     const toolResults = []
     for (const tu of toolUses) {
-      send('chat:tool_start', { name: tu.name, input: tu.input })
+      send('chat:tool_start', { id: tu.id, name: tu.name, input: tu.input })
       const result = await executeTool(tu.name, tu.input, cwd)
       send('chat:tool_end', { name: tu.name, result })
       toolResults.push({ type: 'tool_result', tool_use_id: tu.id, content: JSON.stringify(result) })
@@ -294,6 +317,9 @@ async function agentLoopBedrock(provider, messages, signal, cwd) {
 
     msgs = [...msgs, { role: 'user', content: toolResults }]
   }
+
+  // 保存完整历史（含 tool results），供下次对话复用
+  if (histKey && !signal.aborted) sessionHistory.set(histKey, msgs)
 }
 
 function resolveModel(provider) {
@@ -365,12 +391,35 @@ function toOpenAIMessages(messages, system) {
   return result
 }
 
-async function agentLoopAnthropic(provider, messages, signal, cwd) {
+// 将最新一条用户消息转成 OpenAI 格式（不含 system 前缀，用于追加到历史）
+function toOpenAIUserMsg(lastMsg) {
+  if (!lastMsg.attachments?.length) {
+    return { role: 'user', content: lastMsg.content }
+  }
+  const parts = []
+  for (const att of lastMsg.attachments) {
+    parts.push(...attToContentBlocks(att, 'openai'))
+  }
+  if (lastMsg.content) parts.push({ type: 'text', text: lastMsg.content })
+  return { role: 'user', content: parts }
+}
+
+async function agentLoopAnthropic(provider, messages, signal, cwd, sessionId) {
   const client = await resolveAnthropicClient(provider)
   const modelId = resolveModel(provider)
 
   const SYSTEM = await buildSystemPrompt(cwd)
-  let msgs = toAnthropicMessages(messages)
+
+  // 使用缓存的历史（含 tool results），只追加最新 user 消息
+  const histKey = sessionId && `anthropic:${sessionId}`
+  let msgs
+  if (histKey && sessionHistory.has(histKey)) {
+    const stored = sessionHistory.get(histKey)
+    msgs = [...stored, ...toAnthropicMessages([messages[messages.length - 1]])]
+  } else {
+    msgs = toAnthropicMessages(messages)
+  }
+
   let toolsSupported = true // 首次尝试带 tools，失败则降级
 
   for (let turn = 0; turn < 50; turn++) {
@@ -466,7 +515,7 @@ async function agentLoopAnthropic(provider, messages, signal, cwd) {
 
     const toolResults = []
     for (const tu of toolUses) {
-      send('chat:tool_start', { name: tu.name, input: tu.input })
+      send('chat:tool_start', { id: tu.id, name: tu.name, input: tu.input })
       const result = await executeTool(tu.name, tu.input, cwd)
       send('chat:tool_end', { name: tu.name, result })
       toolResults.push({
@@ -478,11 +527,14 @@ async function agentLoopAnthropic(provider, messages, signal, cwd) {
 
     msgs = [...msgs, { role: 'user', content: toolResults }]
   }
+
+  // 保存完整历史（含 tool results），供下次对话复用
+  if (histKey && !signal.aborted) sessionHistory.set(histKey, msgs)
 }
 
 // ─── OpenAI Agent Loop ────────────────────────────────────────────────────────
 
-async function agentLoopOpenAI(provider, messages, signal, cwd) {
+async function agentLoopOpenAI(provider, messages, signal, cwd, sessionId) {
   const OpenAI = require('openai')
   const env = resolveEnv(provider)
   const agent = await getProxyAgent()
@@ -505,7 +557,18 @@ async function agentLoopOpenAI(provider, messages, signal, cwd) {
     },
   }))
 
-  let msgs = toOpenAIMessages(messages, SYSTEM)
+  // 使用缓存的历史（含 tool results），只追加最新 user 消息
+  // 注意：每次用最新的 SYSTEM 替换 stored[0]，避免 cwd/skills 变化后系统提示过期
+  const histKey = sessionId && `openai:${sessionId}`
+  let msgs
+  if (histKey && sessionHistory.has(histKey)) {
+    const stored = sessionHistory.get(histKey)
+    const withFreshSystem = [{ role: 'system', content: SYSTEM }, ...stored.slice(1)]
+    msgs = [...withFreshSystem, toOpenAIUserMsg(messages[messages.length - 1])]
+  } else {
+    msgs = toOpenAIMessages(messages, SYSTEM)
+  }
+
   let toolsSupported = true
 
   for (let turn = 0; turn < 50; turn++) {
@@ -580,7 +643,7 @@ async function agentLoopOpenAI(provider, messages, signal, cwd) {
     for (const tc of toolCalls) {
       let input = {}
       try { input = JSON.parse(tc.args || '{}') } catch {}
-      send('chat:tool_start', { name: tc.name, input })
+      send('chat:tool_start', { id: tc.id, name: tc.name, input })
       const result = await executeTool(tc.name, input, cwd)
       send('chat:tool_end', { name: tc.name, result })
       msgs = [...msgs, {
@@ -590,6 +653,9 @@ async function agentLoopOpenAI(provider, messages, signal, cwd) {
       }]
     }
   }
+
+  // 保存完整历史（含 tool results），供下次对话复用
+  if (histKey && !signal.aborted) sessionHistory.set(histKey, msgs)
 }
 
 async function buildSystemPrompt(cwd) {
@@ -610,11 +676,14 @@ OS: ${process.platform}
 Home directory: ${os.homedir()}
 
 When using tools:
+- Execute all tool calls immediately and directly — never ask the user for permission or confirmation before using a tool
+- Never say "should I proceed?", "do you want me to...", or ask for authorization before running a tool
+- After reading a file or getting tool results, always continue to complete the full task — do not stop and wait
 - For bash commands, prefer short targeted commands
 - When editing files, always read them first to understand the content
 - Report what you're doing as you go
 
-Be direct and efficient. Complete tasks with the minimum necessary tool calls.`
+Be direct and efficient. Complete tasks fully with all necessary tool calls.`
 }
 
 module.exports = { setupChatHandlers }
