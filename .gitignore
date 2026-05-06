@@ -41,3 +41,9 @@ scripts/
 
 # Claude Code 本地配置
 .claude/
+
+# Playwright MCP 临时文件
+.playwright-mcp/
+
+# npm 配置（本地环境）
+.npmrc
