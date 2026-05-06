@@ -1,8 +1,13 @@
 const { app, BrowserWindow, ipcMain, shell, Menu, dialog } = require('electron')
 const path = require('path')
 const fs = require('fs')
+const fsPromises = require('fs').promises
 const os = require('os')
 const { setupChatHandlers } = require('./chat')
+const { exec } = require('child_process')
+const { promisify } = require('util')
+
+const execAsync = promisify(exec)
 
 const isDev = process.env.NODE_ENV === 'development'
 
@@ -327,4 +332,47 @@ ipcMain.handle('file:pick', async () => {
       size: data.length,
     }
   })
+})
+
+// ─── 技能市场 ─────────────────────────────────────────────────────────────────
+const SKILLS_DIR = path.join(os.homedir(), '.claude', 'skills')
+
+ipcMain.handle('skills:list', async () => {
+  try {
+    const dirs = await fsPromises.readdir(SKILLS_DIR)
+    const skills = []
+    for (const dir of dirs) {
+      const metaPath = path.join(SKILLS_DIR, dir, '_meta.json')
+      try {
+        const metaContent = await fsPromises.readFile(metaPath, 'utf8')
+        const meta = JSON.parse(metaContent)
+        skills.push({ slug: dir, ...meta })
+      } catch {
+        skills.push({ slug: dir, name: dir })
+      }
+    }
+    return skills
+  } catch {
+    return []
+  }
+})
+
+ipcMain.handle('skills:fetch', async (event, category, query, page = 1) => {
+  const url = new URL('https://api.skillhub.cn/api/skills')
+  url.searchParams.set('page', page)
+  url.searchParams.set('pageSize', 24)
+  if (category && category !== 'all') url.searchParams.set('category', category)
+  if (query) url.searchParams.set('q', query)
+  url.searchParams.set('sortBy', 'score')
+  url.searchParams.set('order', 'desc')
+
+  const res = await fetch(url.toString())
+  const data = await res.json()
+  return data.data
+})
+
+ipcMain.handle('skills:install', async (event, ownerName, slug) => {
+  const cmd = `npx skills add clawhub.ai/${ownerName}/${slug} -g -y`
+  const { stdout, stderr } = await execAsync(cmd)
+  return { success: true, stdout, stderr }
 })

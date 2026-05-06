@@ -1,8 +1,10 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { ProviderStore, useProviders } from './store/providers'
 import { SessionStore, useSessions } from './store/sessions'
+import { SkillsStore, useSkills } from './store/skills'
 import ProvidersPage from './pages/ProvidersPage'
 import ChatPage from './pages/ChatPage'
+import SkillsPage from './pages/SkillsPage'
 import logoUrl from '/logo.svg'
 
 // SVG 图标组件
@@ -24,11 +26,12 @@ function IconSettings() {
 }
 
 
-function IconBook() {
+
+function IconMarket() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5">
-      <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
-      <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+      <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z" />
+      <line x1="7" y1="7" x2="7.01" y2="7" />
     </svg>
   )
 }
@@ -94,11 +97,24 @@ function SessionSidebar() {
 }
 
 function Layout() {
+  const isMac = window.api.platform === 'darwin'
   const [page, setPage] = useState('chat')
   const { activeProvider } = useProviders()
   const { createSession } = useSessions()
+  const { fetchInstalled } = useSkills()
+
+  // 启动时加载已安装技能
+  useEffect(() => {
+    fetchInstalled()
+  }, [])
+
   return (
-    <div className="flex h-screen bg-[#0f1117] text-slate-200">
+    <div className="flex flex-col h-screen bg-[#0f1117] text-slate-200">
+      {/* Mac 专用拖拽标题栏：为流量灯按钮留出空间 */}
+      {isMac && (
+        <div className="h-7 shrink-0 bg-slate-950" style={{ WebkitAppRegion: 'drag' }} />
+      )}
+      <div className="flex flex-1 overflow-hidden">
       {/* 左侧图标导航 */}
       <nav className="w-12 flex flex-col items-center py-3 gap-1 bg-slate-950 border-r border-slate-800 shrink-0">
         <img src={logoUrl} alt="logo" className="w-7 h-7 mb-3 rounded-lg select-none" />
@@ -106,7 +122,7 @@ function Layout() {
         {/* 对话按钮 */}
         <button
           onClick={() => setPage('chat')}
-          title="开始对话"
+          title="对话"
           className={`w-9 h-9 rounded-xl flex items-center justify-center transition-colors ${
             page === 'chat' ? 'bg-green-700 text-white' : 'text-green-600 hover:text-green-400 hover:bg-slate-800'
           }`}
@@ -117,7 +133,7 @@ function Layout() {
         {/* 配置模型按钮 */}
         <button
           onClick={() => setPage('providers')}
-          title="配置模型"
+          title="配置"
           className={`w-9 h-9 rounded-xl flex items-center justify-center transition-colors ${
             page === 'providers' ? 'bg-slate-600 text-white' : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800'
           }`}
@@ -125,15 +141,19 @@ function Layout() {
           <IconSettings />
         </button>
 
-        {/* 底部：配置指南 + 状态指示 */}
-        <div className="mt-auto flex flex-col items-center gap-2 mb-1">
-          <button
-            onClick={() => window.open('https://my.feishu.cn/wiki/NdqwwfDfHiWS7dkMRn4cr977njd', '_blank')}
-            title="配置指南"
-            className="w-9 h-9 rounded-xl flex items-center justify-center transition-colors text-slate-500 hover:text-sky-400 hover:bg-slate-800"
-          >
-            <IconBook />
-          </button>
+        {/* 技能市场按钮 */}
+        <button
+          onClick={() => setPage('skills')}
+          title="技能"
+          className={`w-9 h-9 rounded-xl flex items-center justify-center transition-colors ${
+            page === 'skills' ? 'bg-amber-700 text-white' : 'text-amber-600 hover:text-amber-400 hover:bg-slate-800'
+          }`}
+        >
+          <IconMarket />
+        </button>
+
+        {/* 底部：状态指示 */}
+        <div className="mt-auto mb-1">
           <div
             title={activeProvider ? `已激活: ${activeProvider.name}` : '未激活任何配置'}
             className={`w-2 h-2 rounded-full mx-auto ${activeProvider ? 'bg-green-500' : 'bg-slate-600'}`}
@@ -148,7 +168,9 @@ function Layout() {
       <main className="flex-1 flex flex-col overflow-hidden">
         {page === 'chat' && <ChatPage />}
         {page === 'providers' && <ProvidersPage />}
+        {page === 'skills' && <SkillsPage />}
       </main>
+      </div>
     </div>
   )
 }
@@ -157,7 +179,9 @@ export default function App() {
   return (
     <ProviderStore>
       <SessionStore>
-        <Layout />
+        <SkillsStore>
+          <Layout />
+        </SkillsStore>
       </SessionStore>
     </ProviderStore>
   )

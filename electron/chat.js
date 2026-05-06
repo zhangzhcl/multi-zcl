@@ -2,6 +2,7 @@ const { ipcMain, BrowserWindow, session } = require('electron')
 const { TOOL_DEFINITIONS, executeTool } = require('./tools')
 const os = require('os')
 const path = require('path')
+const fsPromises = require('fs').promises
 const { HttpsProxyAgent } = require('https-proxy-agent')
 
 // 自动检测本机系统代理（127.0.0.1 本地代理优先）
@@ -22,6 +23,28 @@ async function getProxyAgent(targetUrl = 'https://bedrock-runtime.us-east-1.amaz
 let currentAbortController = null
 
 const IDLE_TIMEOUT_MS = 60_000
+
+// 获取已安装的技能列表
+async function getInstalledSkills() {
+  const SKILLS_DIR = path.join(os.homedir(), '.claude', 'skills')
+  try {
+    const dirs = await fsPromises.readdir(SKILLS_DIR)
+    const skills = []
+    for (const dir of dirs) {
+      const skillPath = path.join(SKILLS_DIR, dir)
+      const skillMdPath = path.join(skillPath, 'SKILL.md')
+      try {
+        const content = await fsPromises.readFile(skillMdPath, 'utf8')
+        skills.push({ slug: dir, content })
+      } catch {
+        // SKILL.md 不存在，跳过
+      }
+    }
+    return skills
+  } catch {
+    return []
+  }
+}
 
 // 给 signal 挂一个空闲超时：超过 IDLE_TIMEOUT_MS 没有调用 resetTimer() 就自动 abort
 function makeIdleTimer(signal) {
@@ -133,7 +156,7 @@ async function agentLoopBedrock(provider, messages, signal, cwd) {
   const client = new BedrockRuntimeClient(clientConfig)
   const modelId = env.ANTHROPIC_MODEL || provider.modelId
 
-  const SYSTEM = buildSystemPrompt(cwd)
+  const SYSTEM = await buildSystemPrompt(cwd)
 
   // 转换工具定义为 Bedrock ConverseStream 格式
   const tools = TOOL_DEFINITIONS.map(t => ({
@@ -325,7 +348,7 @@ async function agentLoopAnthropic(provider, messages, signal, cwd) {
   const client = await resolveAnthropicClient(provider)
   const modelId = resolveModel(provider)
 
-  const SYSTEM = buildSystemPrompt(cwd)
+  const SYSTEM = await buildSystemPrompt(cwd)
   let msgs = toAnthropicMessages(messages)
   let toolsSupported = true // 首次尝试带 tools，失败则降级
 
@@ -450,7 +473,7 @@ async function agentLoopOpenAI(provider, messages, signal, cwd) {
   const client = new OpenAI.default(clientOpts)
   const modelId = resolveModel(provider)
 
-  const SYSTEM = buildSystemPrompt(cwd)
+  const SYSTEM = await buildSystemPrompt(cwd)
 
   const functions = TOOL_DEFINITIONS.map(t => ({
     type: 'function',
@@ -548,9 +571,16 @@ async function agentLoopOpenAI(provider, messages, signal, cwd) {
   }
 }
 
-function buildSystemPrompt(cwd) {
-  return `You are an AI assistant with access to tools that let you interact with the user's computer. You can read/write files, run shell commands, search code, and more.
+async function buildSystemPrompt(cwd) {
+  const skills = await getInstalledSkills()
+  let skillsPrompt = ''
 
+  if (skills.length > 0) {
+    const skillList = skills.map(s => `- ${s.slug}: ${s.content.split('\n')[0] || 'No description'}`).join('\n')
+    skillsPrompt = `\n\nYou have access to the following skills:\n${skillList}\n\nTo use a skill, reference its name or description in your response. The skill content will be provided when relevant.\n`
+  }
+
+  return `You are an AI assistant with access to tools that let you interact with the user's computer. You can read/write files, run shell commands, search code, and more.${skillsPrompt}
 Current working directory: ${cwd}
 OS: ${process.platform}
 Home directory: ${os.homedir()}

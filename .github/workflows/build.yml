@@ -1,0 +1,135 @@
+name: Build Multi-ZCL
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+        include:
+          - os: macos-latest
+            platform: mac
+            arch: arm64
+            artifact_name: Multi-ZCL-mac
+          - os: windows-latest
+            platform: win
+            arch: x64
+            artifact_name: Multi-ZCL-win
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup Python (for node-gyp)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Get npm cache directory
+        id: npm-cache-dir
+        shell: bash
+        run: echo "dir=$(npm config get cache)" >> $GITHUB_OUTPUT
+
+      - name: Cache npm dependencies
+        uses: actions/cache@v4
+        id: npm-cache
+        with:
+          path: ${{ steps.npm-cache-dir.outputs.dir }}
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Build Electron app (${{ matrix.platform }})
+        run: npm run dist:${{ matrix.platform }}
+        env:
+          # Windows: disable code signing
+          CSC_IDENTITY_AUTO_DISCOVERY: ${{ matrix.os == 'windows-latest' && 'false' || '' }}
+
+      - name: List release files
+        shell: bash
+        run: |
+          echo "Release directory contents:"
+          ls -lah release/ || echo "No release directory"
+
+      - name: Prepare upload files
+        shell: bash
+        run: |
+          mkdir -p upload
+          if [ "${{ matrix.platform }}" = "mac" ]; then
+            cp -r release/*.dmg upload/ 2>/dev/null || true
+            cp -r release/*.blockmap upload/ 2>/dev/null || true
+          else
+            cp -r release/*.exe upload/ 2>/dev/null || true
+            cp -r release/*.zip upload/ 2>/dev/null || true
+          fi
+          ls -lah upload/
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: upload/*
+          retention-days: 30
+
+  release:
+    name: Create Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download macOS artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: Multi-ZCL-mac
+          path: mac-artifacts
+
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: Multi-ZCL-win
+          path: win-artifacts
+
+      - name: Display artifacts
+        run: |
+          echo "macOS artifacts:"
+          ls -lah mac-artifacts/
+          echo "Windows artifacts:"
+          ls -lah win-artifacts/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            mac-artifacts/*
+            win-artifacts/*
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

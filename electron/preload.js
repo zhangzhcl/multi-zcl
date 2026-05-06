@@ -10,6 +10,12 @@ window.addEventListener('drop', (e) => {
 }, true)
 
 contextBridge.exposeInMainWorld('api', {
+  platform: process.platform,
+  skills: {
+    list: () => ipcRenderer.invoke('skills:list'),
+    fetch: (category, query, page) => ipcRenderer.invoke('skills:fetch', category, query, page),
+    install: (ownerName, slug) => ipcRenderer.invoke('skills:install', ownerName, slug)
+  },
   providers: {
     list: () => ipcRenderer.invoke('providers:list'),
     save: (provider) => ipcRenderer.invoke('providers:save', provider),
