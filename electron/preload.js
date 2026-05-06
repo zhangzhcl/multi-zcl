@@ -47,6 +47,7 @@ contextBridge.exposeInMainWorld('api', {
     clear: (sessionId) => ipcRenderer.invoke('chat:clear', sessionId),
   },
   file: {
+    open: (filePath) => ipcRenderer.invoke('file:open', filePath),
     pickDir: () => ipcRenderer.invoke('file:pickDir'),
     pick: () => ipcRenderer.invoke('file:pick'),
     fromPath: (filePath) => ipcRenderer.invoke('file:fromPath', filePath),

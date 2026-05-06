@@ -1,4 +1,10 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
+
+// 判断字符串是否是本地文件路径（Unix 或 Windows）
+function isLocalFilePath(text) {
+  const t = text.trim()
+  return /^\/[^\s\n]+\.\w+$/.test(t) || /^[A-Za-z]:[\\\/][^\s\n]+\.\w+$/.test(t)
+}
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
@@ -111,42 +117,98 @@ function ToolCallCard({ toolCall }) {
 }
 
 function MarkdownContent({ content }) {
+  const [previewHtml, setPreviewHtml] = useState(null)
+
   return (
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      components={{
-        h1: ({ children }) => <h1 className="text-lg font-bold text-slate-100 mt-3 mb-1">{children}</h1>,
-        h2: ({ children }) => <h2 className="text-base font-bold text-slate-100 mt-3 mb-1">{children}</h2>,
-        h3: ({ children }) => <h3 className="text-sm font-semibold text-slate-200 mt-2 mb-1">{children}</h3>,
-        p: ({ children }) => <p className="mb-2 last:mb-0 leading-relaxed">{children}</p>,
-        strong: ({ children }) => <strong className="font-semibold text-slate-100">{children}</strong>,
-        em: ({ children }) => <em className="italic text-slate-300">{children}</em>,
-        ul: ({ children }) => <ul className="list-disc list-inside space-y-0.5 mb-2 pl-2">{children}</ul>,
-        ol: ({ children }) => <ol className="list-decimal list-inside space-y-0.5 mb-2 pl-2">{children}</ol>,
-        li: ({ children }) => <li className="text-slate-300">{children}</li>,
-        blockquote: ({ children }) => <blockquote className="border-l-2 border-slate-500 pl-3 my-2 text-slate-400 italic">{children}</blockquote>,
-        hr: () => <hr className="border-slate-600 my-3" />,
-        a: ({ href, children }) => <a href={href} className="text-indigo-400 hover:text-indigo-300 underline" target="_blank" rel="noreferrer">{children}</a>,
-        code: ({ inline, className, children }) => {
-          if (inline) {
-            return <code className="px-1 py-0.5 bg-slate-700 rounded text-xs text-indigo-300 font-mono">{children}</code>
-          }
-          const lang = (className || '').replace('language-', '')
-          return (
-            <div className="rounded-lg overflow-hidden my-2">
-              {lang && <div className="px-3 py-1 bg-slate-700 text-xs text-slate-400 font-mono">{lang}</div>}
-              <pre className="p-3 bg-slate-900 text-slate-300 text-xs overflow-x-auto">
-                <code>{children}</code>
-              </pre>
-            </div>
-          )
-        },
-        table: ({ children }) => <div className="overflow-x-auto my-2"><table className="text-xs border-collapse w-full">{children}</table></div>,
-        th: ({ children }) => <th className="border border-slate-600 px-2 py-1 bg-slate-700 text-slate-200 font-medium text-left">{children}</th>,
-        td: ({ children }) => <td className="border border-slate-600 px-2 py-1 text-slate-300">{children}</td>,
-      }}
-    >
-      {content}
-    </ReactMarkdown>
+    <>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          h1: ({ children }) => <h1 className="text-lg font-bold text-slate-100 mt-3 mb-1">{children}</h1>,
+          h2: ({ children }) => <h2 className="text-base font-bold text-slate-100 mt-3 mb-1">{children}</h2>,
+          h3: ({ children }) => <h3 className="text-sm font-semibold text-slate-200 mt-2 mb-1">{children}</h3>,
+          p: ({ children }) => <p className="mb-2 last:mb-0 leading-relaxed">{children}</p>,
+          strong: ({ children }) => <strong className="font-semibold text-slate-100">{children}</strong>,
+          em: ({ children }) => <em className="italic text-slate-300">{children}</em>,
+          ul: ({ children }) => <ul className="list-disc list-inside space-y-0.5 mb-2 pl-2">{children}</ul>,
+          ol: ({ children }) => <ol className="list-decimal list-inside space-y-0.5 mb-2 pl-2">{children}</ol>,
+          li: ({ children }) => <li className="text-slate-300">{children}</li>,
+          blockquote: ({ children }) => <blockquote className="border-l-2 border-slate-500 pl-3 my-2 text-slate-400 italic">{children}</blockquote>,
+          hr: () => <hr className="border-slate-600 my-3" />,
+          a: ({ href, children }) => <a href={href} className="text-indigo-400 hover:text-indigo-300 underline" target="_blank" rel="noreferrer">{children}</a>,
+          code: ({ inline, className, children }) => {
+            const text = String(children).trim()
+            const lang = (className || '').replace('language-', '')
+            const isHtml = lang === 'html' || lang === 'htm'
+
+            if (inline) {
+              // 内联代码：如果是文件路径，加「打开」按钮
+              if (isLocalFilePath(text)) {
+                return (
+                  <span className="inline-flex items-center gap-1.5 flex-wrap">
+                    <code className="px-1 py-0.5 bg-slate-700 rounded text-xs text-indigo-300 font-mono break-all">{text}</code>
+                    <button
+                      onClick={() => window.api.file.open(text)}
+                      className="px-1.5 py-0.5 text-xs bg-indigo-700 hover:bg-indigo-600 text-white rounded transition-colors shrink-0"
+                    >
+                      打开
+                    </button>
+                  </span>
+                )
+              }
+              return <code className="px-1 py-0.5 bg-slate-700 rounded text-xs text-indigo-300 font-mono">{children}</code>
+            }
+
+            // 块代码：检测纯文件路径 或 HTML 代码
+            const isPathBlock = isLocalFilePath(text)
+
+            return (
+              <div className="rounded-lg overflow-hidden my-2">
+                {/* 语言标签 + 操作按钮 */}
+                <div className="flex items-center justify-between px-3 py-1 bg-slate-700">
+                  <span className="text-xs text-slate-400 font-mono">{isPathBlock ? '路径' : (lang || '')}</span>
+                  <div className="flex gap-1.5">
+                    {isPathBlock && (
+                      <button
+                        onClick={() => window.api.file.open(text)}
+                        className="px-2 py-0.5 text-xs bg-indigo-600 hover:bg-indigo-500 text-white rounded transition-colors"
+                      >
+                        打开文件
+                      </button>
+                    )}
+                    {isHtml && (
+                      <button
+                        onClick={() => setPreviewHtml(previewHtml ? null : text)}
+                        className="px-2 py-0.5 text-xs bg-emerald-700 hover:bg-emerald-600 text-white rounded transition-colors"
+                      >
+                        {previewHtml ? '关闭预览' : '预览'}
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <pre className="p-3 bg-slate-900 text-slate-300 text-xs overflow-x-auto">
+                  <code>{children}</code>
+                </pre>
+                {/* HTML 内嵌预览 */}
+                {isHtml && previewHtml && (
+                  <iframe
+                    srcDoc={previewHtml}
+                    sandbox="allow-scripts allow-same-origin"
+                    className="w-full bg-white border-t border-slate-600"
+                    style={{ height: '480px' }}
+                    title="HTML预览"
+                  />
+                )}
+              </div>
+            )
+          },
+          table: ({ children }) => <div className="overflow-x-auto my-2"><table className="text-xs border-collapse w-full">{children}</table></div>,
+          th: ({ children }) => <th className="border border-slate-600 px-2 py-1 bg-slate-700 text-slate-200 font-medium text-left">{children}</th>,
+          td: ({ children }) => <td className="border border-slate-600 px-2 py-1 text-slate-300">{children}</td>,
+        }}
+      >
+        {content}
+      </ReactMarkdown>
+    </>
   )
 }

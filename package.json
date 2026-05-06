@@ -1,7 +1,7 @@
 {
   "name": "multi-zcl",
   "private": true,
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "Multi-provider AI gateway",
   "main": "electron/main.js",
   "scripts": {

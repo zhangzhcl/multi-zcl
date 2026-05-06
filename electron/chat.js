@@ -667,7 +667,7 @@ async function buildSystemPrompt(cwd) {
       const desc = s.description ? ` - ${s.description}` : ''
       return `- ${s.name}${desc}`
     }).join('\n')
-    skillsPrompt = `\n\nYou have access to the following skills (refer to them by name when relevant):\n${skillList}\n\nWhen a skill is relevant to the conversation, its full content will be injected automatically.\n`
+    skillsPrompt = `\n\nYou have access to the following installed skills:\n${skillList}\n\nWhen a user task matches a skill, you MUST:\n1. Use the read_file tool to read ~/.claude/skills/<slug>/SKILL.md FIRST\n2. Follow the instructions in that skill file exactly\n3. Do NOT start the task before reading the skill file\n\nSkill slugs are the directory names under ~/.claude/skills/. Always prefer using a matching skill over writing code from scratch.\n`
   }
 
   return `You are an AI assistant with access to tools that let you interact with the user's computer. You can read/write files, run shell commands, search code, and more.${skillsPrompt}
@@ -681,9 +681,16 @@ When using tools:
 - After reading a file or getting tool results, always continue to complete the full task — do not stop and wait
 - For bash commands, prefer short targeted commands
 - When editing files, always read them first to understand the content
-- Report what you're doing as you go
 
-Be direct and efficient. Complete tasks fully with all necessary tool calls.`
+CRITICAL rules about task completion:
+- NEVER claim a task is done unless you have actually executed it and seen the real output
+- NEVER say "analysis complete", "report generated", "task finished" etc. without having run the actual code and verified the output
+- If you wrote a script, you MUST run it with bash and show the real stdout/stderr — do not assume it succeeded
+- Do not repeat pip/npm install commands for packages you already installed in the same conversation
+- If a bash command fails, read the error and fix it — do not silently retry the same command
+- Show actual results to the user: file paths created, command output, data summaries — never describe results you haven't actually produced
+
+Be direct and efficient. Complete tasks fully with verified real output.`
 }
 
 module.exports = { setupChatHandlers }

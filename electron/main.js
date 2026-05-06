@@ -300,6 +300,11 @@ ipcMain.handle('file:fromBuffer', (_, name, ext, buffer) => {
   }
 })
 
+ipcMain.handle('file:open', async (_, filePath) => {
+  const err = await shell.openPath(filePath)
+  return err || null // null 表示成功，否则返回错误信息
+})
+
 ipcMain.handle('file:pickDir', async () => {
   const win = BrowserWindow.getAllWindows()[0]
   const result = await dialog.showOpenDialog(win, {
