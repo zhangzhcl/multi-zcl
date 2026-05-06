@@ -160,8 +160,9 @@ function buildMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template))
 }
 
+// 所有平台统一：关闭窗口即退出程序
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit()
+  app.quit()
 })
 
 // ─── Provider 存储路径 ───────────────────────────────────────────────────────

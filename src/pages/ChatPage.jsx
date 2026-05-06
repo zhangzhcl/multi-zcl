@@ -73,7 +73,11 @@ export default function ChatPage() {
   useEffect(() => {
     setInput('')
     setAttachments([])
-    userScrolledRef.current = false // 切换会话时重置，滚到底部展示最新消息
+    userScrolledRef.current = false
+    // 等 DOM 渲染完再滚到底部，确保显示最后一条消息
+    requestAnimationFrame(() => {
+      bottomRef.current?.scrollIntoView({ behavior: 'auto' })
+    })
   }, [activeId])
 
   // 会话被删除时清理对应的待发队列，防止内存泄漏
