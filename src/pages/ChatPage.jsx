@@ -59,6 +59,7 @@ export default function ChatPage() {
   const bottomRef = useRef(null)
   const messagesContainerRef = useRef(null)
   const userScrolledRef = useRef(false) // 用户是否滚动离开了底部
+  const [showScrollBtn, setShowScrollBtn] = useState(false)
   const pickFilesRef = useRef(null)
   const textareaRef = useRef(null)
   const pendingQueues = useRef({}) // sid -> [{text, atts}]
@@ -74,7 +75,7 @@ export default function ChatPage() {
     setInput('')
     setAttachments([])
     userScrolledRef.current = false
-    // 等 DOM 渲染完再滚到底部，确保显示最后一条消息
+    setShowScrollBtn(false)
     requestAnimationFrame(() => {
       bottomRef.current?.scrollIntoView({ behavior: 'auto' })
     })
@@ -105,12 +106,14 @@ export default function ChatPage() {
     return () => { offNew(); offFile(); offDrop() }
   }, [createSession])
 
-  // 监听滚动：用户滚离底部超过 80px 则暂停自动跟随
+  // 监听滚动：用户滚离底部超过 80px 则暂停自动跟随，同时显示回底部按钮
   const handleMessagesScroll = () => {
     const el = messagesContainerRef.current
     if (!el) return
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
-    userScrolledRef.current = distanceFromBottom > 80
+    const scrolled = distanceFromBottom > 80
+    userScrolledRef.current = scrolled
+    setShowScrollBtn(scrolled)
   }
 
   // 流式内容更新时：只有用户在底部才自动跟随，用 auto（即时）避免高频 smooth 产生抖动
@@ -374,10 +377,11 @@ export default function ChatPage() {
       )}
 
       {/* 消息列表 */}
+      <div className="flex-1 relative overflow-hidden">
       <div
         ref={messagesContainerRef}
         onScroll={handleMessagesScroll}
-        className="flex-1 overflow-y-auto px-4 py-4 space-y-4"
+        className="h-full overflow-y-auto px-4 py-4 space-y-4"
       >
         {messages.length === 0 && (
           <div className="text-center text-slate-600 mt-20">
@@ -395,6 +399,24 @@ export default function ChatPage() {
           />
         ))}
         <div ref={bottomRef} />
+      </div>
+
+      {/* 回到底部按钮 */}
+      {showScrollBtn && (
+        <button
+          onClick={() => {
+            userScrolledRef.current = false
+            setShowScrollBtn(false)
+            bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+          }}
+          className="absolute bottom-4 right-4 z-10 w-9 h-9 flex items-center justify-center bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-full shadow-lg transition-colors border border-slate-600"
+          title="回到底部"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+        </button>
+      )}
       </div>
 
       {/* 附件预览 */}

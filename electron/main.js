@@ -37,6 +37,28 @@ function createWindow() {
     return { action: 'deny' }
   })
 
+  // 点击关闭按钮时询问是退出还是关闭页面
+  win.on('close', (e) => {
+    e.preventDefault()
+    dialog.showMessageBox(win, {
+      type: 'question',
+      buttons: ['退出程序', '关闭页面', '取消'],
+      defaultId: 0,
+      cancelId: 2,
+      title: 'Multi-ZCL',
+      message: '请选择操作',
+      detail: '「关闭页面」保留程序在后台运行；「退出程序」完全退出。',
+    }).then(({ response }) => {
+      if (response === 0) {
+        win.destroy() // 跳过 close 事件直接销毁，再触发 window-all-closed
+        app.quit()
+      } else if (response === 1) {
+        win.hide()
+      }
+      // response === 2: 取消，不做任何事
+    })
+  })
+
   if (isDev) {
     win.loadURL('http://localhost:5173')
   } else {
@@ -49,7 +71,10 @@ app.whenReady().then(() => {
   buildMenu()
   createWindow()
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    // macOS 点击 Dock 图标时，若窗口已隐藏则重新显示
+    const wins = BrowserWindow.getAllWindows()
+    if (wins.length === 0) createWindow()
+    else wins[0].show()
   })
 })
 
