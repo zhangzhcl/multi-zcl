@@ -14,11 +14,9 @@ jobs:
         include:
           - os: macos-latest
             platform: mac
-            arch: x64
             artifact_name: Multi-ZCL-mac
           - os: windows-latest
             platform: win
-            arch: x64
             artifact_name: Multi-ZCL-win
 
     runs-on: ${{ matrix.os }}
@@ -37,19 +35,12 @@ jobs:
         with:
           python-version: '3.x'
 
-      - name: Get npm cache directory
-        id: npm-cache-dir
-        shell: bash
-        run: echo "dir=$(npm config get cache)" >> $GITHUB_OUTPUT
-
       - name: Cache npm dependencies
         uses: actions/cache@v4
-        id: npm-cache
         with:
-          path: ${{ steps.npm-cache-dir.outputs.dir }}
+          path: ~/.npm
           key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-node-
+          restore-keys: ${{ runner.os }}-node-
 
       - name: Install dependencies
         run: npm install
@@ -57,42 +48,38 @@ jobs:
       - name: Build frontend
         run: npm run build
 
-      - name: Build Electron app (${{ matrix.platform }})
+      - name: Build Electron app
         run: npm run dist:${{ matrix.platform }} -- --publish never
         env:
-          # Windows: disable code signing
-          CSC_IDENTITY_AUTO_DISCOVERY: ${{ matrix.os == 'windows-latest' && 'false' || '' }}
+          CSC_IDENTITY_AUTO_DISCOVERY: false
 
-      - name: List release files
+      - name: List release directory
         shell: bash
-        run: |
-          echo "Release directory contents:"
-          ls -lah release/ || echo "No release directory"
+        run: ls -lah release/ || echo "No release directory"
 
-      - name: Prepare upload files
+      - name: Collect artifacts
         shell: bash
         run: |
           mkdir -p upload
           if [ "${{ matrix.platform }}" = "mac" ]; then
-            cp -r release/*.dmg upload/ 2>/dev/null || true
-            cp -r release/*.blockmap upload/ 2>/dev/null || true
+            find release -maxdepth 1 \( -name "*.dmg" -o -name "*.zip" \) -exec cp {} upload/ \;
           else
-            cp -r release/*.exe upload/ 2>/dev/null || true
-            cp -r release/*.zip upload/ 2>/dev/null || true
+            find release -maxdepth 1 \( -name "*.exe" -o -name "*.zip" \) -exec cp {} upload/ \;
           fi
+          echo "Collected files:"
           ls -lah upload/
 
-      - name: Upload build artifacts
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
-          path: upload/*
-          retention-days: 30
+          path: upload/
+          if-no-files-found: warn
+          retention-days: 7
 
   release:
     name: Create Release
     needs: build
-    if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -102,29 +89,23 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: Multi-ZCL-mac
-          path: mac-artifacts
+          path: artifacts/mac
 
       - name: Download Windows artifacts
         uses: actions/download-artifact@v4
         with:
           name: Multi-ZCL-win
-          path: win-artifacts
+          path: artifacts/win
 
-      - name: Display artifacts
+      - name: List all artifacts
+        run: find artifacts -type f | sort
+
+      - name: Create GitHub Release
         run: |
-          echo "macOS artifacts:"
-          ls -lah mac-artifacts/
-          echo "Windows artifacts:"
-          ls -lah win-artifacts/
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v1
-        with:
-          files: |
-            mac-artifacts/*
-            win-artifacts/*
-          draft: false
-          prerelease: false
-          generate_release_notes: true
+          gh release create "${{ github.ref_name }}" \
+            --title "${{ github.ref_name }}" \
+            --generate-notes \
+            artifacts/mac/* artifacts/win/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
